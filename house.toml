@@ -1,0 +1,34 @@
+family = "infra"
+
+[house]
+platform = "infra/house"
+languages = ["cxx", "python"]
+licence = "MIT"
+
+[packages.root]
+path = "."
+consumer_executables = ["consumer_smoke"]
+[packages.root.modes]
+host = "build-test-install"
+firmware = "build-install"
+
+[[ci.require]]
+group = "firmware"
+matrix = { board = ["pico2_w", "pico_w"] }
+prepare = ["python3 dev.py build", "python3 dev.py gate build-warnings"]
+
+[[packages.root.consumer_cases]]
+name = "accepts-0-1"
+tree = "host"
+consumer_args = ["-DPICO_UTIL_CONSUMER_VERSION=0.1"]
+source = "tests/consumer"
+expect = "runs"
+
+[[packages.root.consumer_cases]]
+name = "refuses-0-2"
+tree = "host"
+consumer_args = ["-DPICO_UTIL_CONSUMER_VERSION=0.2"]
+source = "tests/consumer"
+expect = "fails"
+stage = "consumer-configure"
+message = 'Could not find a configuration file for package "pico_util"'

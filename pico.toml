@@ -1,0 +1,10 @@
+name = "pico-util"
+
+[infra]
+repository = "https://github.com/jamesfxley/pico-tooling.git"
+
+[[footprint]]
+name = "header probe"
+elf = "build-firmware/tests/firmware/pico_util_header_probe.elf"
+ram_kib = 8
+flash_kib = 32

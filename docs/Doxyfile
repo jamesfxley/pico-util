@@ -1,0 +1,21 @@
+# Doxygen configuration for the pico-util API reference.
+#
+# Everything that does not vary lives in infra/house/config/Doxyfile.base; only the three
+# fields below differ between repositories. Doxygen applies assignments in
+# order, so these win over the include.
+#
+#   doxygen docs/Doxyfile      (output: docs/api/html/index.html, gitignored)
+
+@INCLUDE_PATH = infra/house/config
+@INCLUDE      = Doxyfile.base
+
+PROJECT_NAME  = pico-util
+PROJECT_BRIEF = "Shared header-only utilities for the pico-* family"
+INPUT         = src/include \
+                src/bytes/include \
+                src/containers/include \
+                src/heap/include \
+                src/publish/include \
+                src/result/include \
+                src/testing/include
+
