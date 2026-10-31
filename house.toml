@@ -14,7 +14,7 @@ firmware = "build-install"
 
 [[ci.require]]
 group = "firmware"
-matrix = { board = ["pico2_w", "pico_w"] }
+matrix = { board = ["pico2_w", "pico_w", "pico2", "pico"] }
 prepare = ["python3 dev.py build", "python3 dev.py gate build-warnings"]
 
 [[packages.root.consumer_cases]]
