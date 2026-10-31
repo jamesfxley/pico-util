@@ -225,10 +225,7 @@ It is a proxy, and its limit is part of the requirement:
 - **An allocate/free pair that nets to zero between two readings is invisible.**
   What it does catch, and report the size of, is steady-state growth — the
   failure mode a long-running image actually has.
-- **It cannot attribute growth.** The SDK already wraps `malloc`/`free` and
-  overrides `operator new`/`delete` via `pico_malloc` and `pico_cxx_options`, so
-  a second per-allocation hook cannot be linked alongside them. Per-allocation
-  tracing is out of scope for this reason, not by oversight.
+- **It cannot attribute growth.** Per-allocation tracing is absent (FW-1).
 - **It is not thread safe.** `mallinfo` is not, and this library does not
   serialise it. Reading from one thread is the caller's contract, stated in
   the specification's scope rather than by a requirement of its own.
