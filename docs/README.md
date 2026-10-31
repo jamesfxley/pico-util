@@ -7,14 +7,15 @@
 | [technical-specification.md](technical-specification.md) | **Normative.** Scope, constraints, resource budgets, and every requirement (`AR`/`BR`/`CR`/`DR`/`FR`/`MR`/`OR`) with its pass criterion | Deciding what the library must do, or citing a requirement from code |
 | [architecture.md](architecture.md) | Descriptive. How the implementation is put together — the header-only shape and each module's design: the byte-order families, `Result` and `Callback`, the ring and map containers, the two publication strategies, the mallinfo proxy and the allocation harness, and what belongs in the library at all | Working out where a change belongs |
 | [usage-guide.md](usage-guide.md) | Practical use beyond the README: linking it, choosing a byte-order family and a publication strategy, errors and capacity refusals, the allocation harness, measuring post-init heap growth, and why include order is load-bearing | Building an application on the library |
+| [future-work.md](future-work.md) | Work deliberately not built, one entry per deferral, each with its reason and what would have to be true to build it | Asking whether something is absent on purpose, or before proposing it |
 | [deviations.md](deviations.md) | Standing (scope-wide) deviations from the coding standard, each with a rationale, a risk assessment and a review date | Adding or reviewing a suppression |
 | [deviation-budget.txt](deviation-budget.txt) | Per-language suppression ceilings. These only ever ratchet down | Same |
 | [requirement-prefixes.txt](requirement-prefixes.txt) | The requirement prefix convention checked by review | Adding a requirement under a new prefix |
 | [GitHub Releases](https://github.com/jamesfxley/pico-util/releases) | What changed in each release, and what to change in your code when an API broke | Upgrading across a release |
 
 The specification is the only normative document here. `architecture.md`
-describes what is, and work deliberately not done is an issue in the tracker
-rather than a document in the tree (`EN-03.7`).
+describes what is, and work deliberately not done is an entry in
+[future-work.md](future-work.md) (`EN-03.7`); the issue tracker holds defects.
 
 A behaviour claimed in `README.md` or `docs/orientation.md` but absent from the
 specification is not a commitment, and a requirement is not satisfied until the
