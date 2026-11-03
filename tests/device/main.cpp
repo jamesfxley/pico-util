@@ -23,29 +23,30 @@ constexpr std::int64_t STORE_TIMER_INTERVAL_US = 10;
 constexpr std::int64_t SPSC_TIMER_INTERVAL_US = 10;
 constexpr std::uint32_t PHASE_SEED = 0x243F6A88;
 
-// Statistical coverage thresholds, not proofs of an interior landing. Budget
-// roughly 16 boundary instructions (including call/return) against at least
-// 64 * 4 instructions for a word-copy/check loop inside a successful operation.
-// At the default RP2 clocks (at least 125 MHz), allowing two cycles per
-// boundary instruction gives about 0.256 us per bracket. Fixed-seed pauses
-// outside the brackets vary sampling phase; timer phases are not independent
-// random draws, so these exposure estimates do not imply a formal confidence
-// level. CR-2: 4096 IRQ stores at 100 us sample reads lasting hundreds of
-// instructions. Even a conservative boundary share of 32 / (256 + 32) suggests
-// about 456 boundary-only landings; requiring 1024 is well above that
-// expectation.
-constexpr std::uint32_t SEQLOCK_MIN_LANDINGS = 1024;
-// CR-3: 4096 store brackets at 10 us give a boundary-only exposure estimate of
-// 4096 * 0.256 / 10, about 105 landings. Require 512, while each actual store
-// includes a 64-word copy loop plus memcpy, far longer than its boundary.
-constexpr std::uint32_t SLOT_RING_MIN_LANDINGS = 512;
-// CR-9: only the 4096 nonempty consumer brackets count; empty polls do not.
-// At 10 us the boundary-only estimate is 4096 * 0.256 / 10, about 105 landings.
-// Require 512; each real bracket checks 64 words and releases the slot. One
-// producer attempt per IRQ and 0..63 us pauses outside consumption retain a
-// backlog for sampling. The positive 10 us gap leaves mainline time between
-// callbacks; a 1 us gap can be consumed by IRQ bookkeeping on slower targets.
-constexpr std::uint32_t SPSC_MIN_LANDINGS = 512;
+// Instruction-weighted statistical coverage model for GCC 14.2.1, Release,
+// pico2_w, clean image. Re-derive for another compiler/profile/board. g
+// excludes the marker stores and counts instructions before operation entry and
+// after its exit; s counts the shortest successful operation path, with loop
+// iterations expanded. ROM memcpy/memset bodies are omitted, so s is a lower
+// bound and q=g/(g+s) an upper bound in this model. N is the first integer with
+// q^N < 1e-9. This calculation assumes dispersed, independent
+// instruction-weighted landings; fixed-seed phase variation does not prove
+// independence or cycle uniformity. CR-2: set 0x10000c56, call 0x10000c5c,
+// clear 0x10000c62; g=3 (add, bl, mov). load 0x100001e0..0x1000026c: 51
+// instructions plus 63 extra iterations of 0x10000224..0x1000022e (4 each),
+// s>=303. q<=3/306=0.009803922; q^4=9.238454e-9, q^5=9.057308e-11: N=5.
+constexpr std::uint32_t SEQLOCK_MIN_LANDINGS = 5;
+// CR-3: set 0x100010cc, call 0x100010d0, clear 0x100010d6;
+// g=2 (bl at 0x100010d0, mov at 0x100010d4). store 0x10000408..0x10000476: 39
+// instructions plus 63 extra iterations of 0x1000044e..0x10000458 (4 each),
+// s>=291. q<=2/293=0.006825939; q^4=2.170948e-9, q^5=1.481876e-11: N=5.
+constexpr std::uint32_t SLOT_RING_MIN_LANDINGS = 5;
+// CR-9: set 0x10000e98, operation 0x10000e9c..0x10000efe,
+// clear 0x10000f04; g=1 (mov at 0x10000f02). s>=473: 5 setup + 32*14
+// instructions at 0x10000eaa..0x10000ed2 + 15 post-loop + 5 in counter.load at
+// 0x10000a8c..0x10000a98; omit inactive predicated instructions.
+// q<=1/474=0.002109705; q^3=9.389987e-9, q^4=1.981010e-11: N=4.
+constexpr std::uint32_t SPSC_MIN_LANDINGS = 4;
 
 void vary_phase(std::uint32_t& phase, std::uint32_t pause_mask) {
     phase = phase * 1664525U + 1013904223U;
