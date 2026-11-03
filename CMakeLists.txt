@@ -8,15 +8,14 @@ project(pico_util VERSION 0.1.0 LANGUAGES C CXX ASM)
 # No firmware-conditional code and no SDK dependency: the same headers serve
 # host and firmware builds. The SDK is initialised only so that the cross tree
 # is the family's one build-firmware/ tree; nothing the library ships links an
-# SDK library, and only the usage guide's firmware example, compiled under
-# tests/firmware/, reads an SDK header.
+# SDK library. The firmware examples and device tests use the SDK separately.
 house_cxx_common_settings(${PICO_UTIL_BUILD_FIRMWARE})
 pico_family_init_sdk(${PICO_UTIL_BUILD_FIRMWARE})
 
-# -Werror at target scope: nothing third-party compiles into these targets, so
-# every diagnostic is actionable, and no VENDOR_SOURCES keyword is needed here.
+# Device images compile SDK sources; keep -Werror on owned sources only there.
 # FREESTANDING follows CMAKE_CROSSCOMPILING, which is the helper's default.
-house_cxx_add_strict_target(pico_util_strict)
+house_cxx_add_strict_target(pico_util_strict
+    VENDOR_SOURCES ${PICO_UTIL_BUILD_FIRMWARE})
 
 # Declares PICO_UTIL_SANITIZE. Before the targets, and build-wide rather than
 # target-scoped, so fetched GoogleTest is instrumented too -- ASan's
@@ -47,6 +46,10 @@ endif()
 
 if(PICO_UTIL_ENABLE_FIRMWARE_PROBE)
     add_subdirectory(tests/firmware)
+endif()
+
+if(PROJECT_IS_TOP_LEVEL AND PICO_UTIL_BUILD_FIRMWARE)
+    add_subdirectory(tests/device)
 endif()
 
 if(PICO_UTIL_ENABLE_INSTALL)

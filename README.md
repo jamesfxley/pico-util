@@ -90,7 +90,12 @@ python3 dev.py build          # clean build and test of every enabled tree
 python3 dev.py lint           # clang-tidy; blocking
 ```
 
-Cross-compiling the headers for the target, in the image that sets
+Host tests exercise the portable contracts. `tests/firmware/` compiles and
+links the headers for the target; `tests/device/` runs publication and SPSC
+handoffs between mainline and a timer interrupt. Device-test output follows
+the [pinned device convention](infra/guides/device.md#device-tests).
+
+Cross-compiling the headers and device-test image, in the image that sets
 `PICO_SDK_PATH`:
 
 ```sh
