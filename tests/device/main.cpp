@@ -20,6 +20,37 @@ constexpr std::uint32_t TRANSFERS = 4096;
 constexpr std::uint32_t DEADLINE_MS = 5000;
 constexpr std::int64_t TIMER_INTERVAL_US = 100;
 constexpr std::int64_t STORE_TIMER_INTERVAL_US = 10;
+constexpr std::int64_t SPSC_TIMER_INTERVAL_US = 10;
+constexpr std::uint32_t PHASE_SEED = 0x243F6A88;
+
+// Statistical coverage thresholds, not proofs of an interior landing. Budget
+// roughly 16 boundary instructions (including call/return) against at least
+// 64 * 4 instructions for a word-copy/check loop inside a successful operation.
+// At the default RP2 clocks (at least 125 MHz), allowing two cycles per
+// boundary instruction gives about 0.256 us per bracket. Fixed-seed pauses
+// outside the brackets vary sampling phase; timer phases are not independent
+// random draws, so these exposure estimates do not imply a formal confidence
+// level. CR-2: 4096 IRQ stores at 100 us sample reads lasting hundreds of
+// instructions. Even a conservative boundary share of 32 / (256 + 32) suggests
+// about 456 boundary-only landings; requiring 1024 is well above that
+// expectation.
+constexpr std::uint32_t SEQLOCK_MIN_LANDINGS = 1024;
+// CR-3: 4096 store brackets at 10 us give a boundary-only exposure estimate of
+// 4096 * 0.256 / 10, about 105 landings. Require 512, while each actual store
+// includes a 64-word copy loop plus memcpy, far longer than its boundary.
+constexpr std::uint32_t SLOT_RING_MIN_LANDINGS = 512;
+// CR-9: only the 4096 nonempty consumer brackets count; empty polls do not.
+// At 10 us the boundary-only estimate is 4096 * 0.256 / 10, about 105 landings.
+// Require 512; each real bracket checks 64 words and releases the slot. One
+// producer attempt per IRQ and 0..63 us pauses outside consumption retain a
+// backlog for sampling. The positive 10 us gap leaves mainline time between
+// callbacks; a 1 us gap can be consumed by IRQ bookkeeping on slower targets.
+constexpr std::uint32_t SPSC_MIN_LANDINGS = 512;
+
+void vary_phase(std::uint32_t& phase, std::uint32_t pause_mask) {
+    phase = phase * 1664525U + 1013904223U;
+    busy_wait_us_32((phase >> 16U) & pause_mask);
+}
 
 struct Payload {
     std::array<std::uint32_t, 64> words{};
@@ -50,12 +81,15 @@ void fill_payload(Payload& value, std::uint32_t sequence) {
 struct Coverage {
     // Sequential consistency brackets the tested operation on both sides.
     std::atomic<bool> in_progress{false};
-    std::atomic<bool> interrupted{false};
+    // Only this case's IRQ writes the count, so load/store needs no RMW or
+    // atomic runtime lock on ARMv6-M. Release/acquire publishes the count.
+    std::atomic<std::uint32_t> landings{0};
 
     void record_interrupt() {
         if (__get_current_exception() != 0 &&
             in_progress.load(std::memory_order_seq_cst)) {
-            interrupted.store(true, std::memory_order_seq_cst);
+            landings.store(landings.load(std::memory_order_acquire) + 1,
+                           std::memory_order_release);
         }
     }
 };
@@ -66,11 +100,9 @@ struct CaseResult {
 };
 
 [[nodiscard]] CaseResult case_result(bool valid, const Coverage& coverage,
-                                     std::string_view missing) {
-    const bool interrupted =
-        coverage.interrupted.load(std::memory_order_seq_cst);
-    if (!interrupted) {
-        return {.passed = false, .detail = missing};
+                                     std::uint32_t minimum_landings) {
+    if (coverage.landings.load(std::memory_order_acquire) < minimum_landings) {
+        return {.passed = false, .detail = "too few interrupted windows"};
     }
     return {.passed = valid,
             .detail = valid ? "" : "payload or progress check failed"};
@@ -111,6 +143,7 @@ bool seqlock_irq(repeating_timer_t* timer) {
         return {};
     }
     bool valid = true;
+    std::uint32_t phase = PHASE_SEED;
     std::uint32_t reads = 0;
     while (state.completed.load(std::memory_order_acquire) < TRANSFERS &&
            !time_reached(deadline)) {
@@ -119,6 +152,7 @@ bool seqlock_irq(repeating_timer_t* timer) {
         state.coverage.in_progress.store(false, std::memory_order_seq_cst);
         valid = whole(value) && value.words.front() <= TRANSFERS && valid;
         ++reads;
+        vary_phase(phase, 7U);
     }
     static_cast<void>(cancel_repeating_timer(&timer));
     const auto final = state.published.load();
@@ -127,7 +161,7 @@ bool seqlock_irq(repeating_timer_t* timer) {
         state.completed.load(std::memory_order_acquire) == TRANSFERS &&
         final.words.front() == TRANSFERS &&
         state.irq_only.load(std::memory_order_acquire);
-    return case_result(valid_final, state.coverage, "no read was interrupted");
+    return case_result(valid_final, state.coverage, SEQLOCK_MIN_LANDINGS);
 }
 
 struct SlotRingState {
@@ -161,7 +195,7 @@ bool slot_ring_irq(repeating_timer_t* timer) {
 // so zero stores complete during that read, satisfying the writer contract.
 // pico/time.h:801-816 documents IRQ callbacks and positive delays between
 // callback completion and the next start. Consecutive stores with a short delay
-// offer store windows; observing the flag is required, never assumed.
+// offer store brackets; their IRQ landing threshold is statistical coverage.
 [[nodiscard]] CaseResult slot_ring_case() {
     static SlotRingState state;
     fill_payload(state.next, 0);
@@ -172,12 +206,14 @@ bool slot_ring_irq(repeating_timer_t* timer) {
                                 &timer)) {
         return {};
     }
+    std::uint32_t phase = PHASE_SEED;
     std::uint32_t sequence = 1;
     for (; sequence <= TRANSFERS; ++sequence) {
         fill_payload(state.next, sequence);
         state.coverage.in_progress.store(true, std::memory_order_seq_cst);
         state.published.store(state.next);
         state.coverage.in_progress.store(false, std::memory_order_seq_cst);
+        vary_phase(phase, 7U);
         if (!state.valid.load(std::memory_order_acquire) ||
             time_reached(deadline)) {
             break;
@@ -193,7 +229,7 @@ bool slot_ring_irq(repeating_timer_t* timer) {
         sequence == TRANSFERS + 1 &&
         state.observed.load(std::memory_order_acquire) == TRANSFERS &&
         state.valid.load(std::memory_order_acquire);
-    return case_result(valid, state.coverage, "no store was interrupted");
+    return case_result(valid, state.coverage, SLOT_RING_MIN_LANDINGS);
 }
 
 struct SpscState {
@@ -211,15 +247,9 @@ bool spsc_irq(repeating_timer_t* timer) {
         state.irq_only.store(false, std::memory_order_release);
     }
     auto queued = state.queued.load(std::memory_order_acquire);
-    // Bounded burst fills the ring and exercises refusal without dropping a
-    // sequence number: only successful pushes advance the producer.
-    for (std::size_t attempt = 0;
-         attempt <= decltype(state.ring)::CAPACITY && queued < TRANSFERS;
-         ++attempt) {
-        fill_payload(state.next, queued + 1);
-        if (!state.ring.push(state.next)) {
-            break;
-        }
+    // One attempt per IRQ: refusals retain the sequence number for retry.
+    fill_payload(state.next, queued + 1);
+    if (state.ring.push(state.next)) {
         ++queued;
     }
     state.queued.store(queued, std::memory_order_release);
@@ -231,28 +261,30 @@ bool spsc_irq(repeating_timer_t* timer) {
     static SpscState state;
     repeating_timer_t timer{};
     const auto deadline = make_timeout_time_ms(DEADLINE_MS);
-    if (!add_repeating_timer_us(TIMER_INTERVAL_US, spsc_irq, &state, &timer)) {
+    if (!add_repeating_timer_us(SPSC_TIMER_INTERVAL_US, spsc_irq, &state,
+                                &timer)) {
         return {};
     }
     std::uint32_t received = 0;
+    std::uint32_t phase = PHASE_SEED;
     bool valid = true;
     while (received < TRANSFERS && !time_reached(deadline)) {
-        state.coverage.in_progress.store(true, std::memory_order_seq_cst);
         const auto* value = state.ring.front();
         if (value != nullptr) {
+            state.coverage.in_progress.store(true, std::memory_order_seq_cst);
             ++received;
             valid = whole(*value) && value->words.front() == received && valid;
             state.ring.pop();
+            state.coverage.in_progress.store(false, std::memory_order_seq_cst);
+            vary_phase(phase, 63U);
         }
-        state.coverage.in_progress.store(false, std::memory_order_seq_cst);
     }
     static_cast<void>(cancel_repeating_timer(&timer));
     const bool valid_final =
         valid && received == TRANSFERS && state.ring.empty() &&
         state.queued.load(std::memory_order_acquire) == received &&
         state.irq_only.load(std::memory_order_acquire);
-    return case_result(valid_final, state.coverage,
-                       "no consumer operation was interrupted");
+    return case_result(valid_final, state.coverage, SPSC_MIN_LANDINGS);
 }
 
 }  // namespace
