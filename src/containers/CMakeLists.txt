@@ -1,6 +1,4 @@
 # Fixed-capacity containers (BR-1..BR-16, and CR-9 for the SPSC counter).
-# The target is INTERFACE and carries only headers, because every module is
-# header-only.
 add_library(pico_util_containers INTERFACE)
 add_library(pico_util::containers ALIAS pico_util_containers)
 

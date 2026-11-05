@@ -7,11 +7,8 @@ add_subdirectory(publish)
 add_subdirectory(result)
 add_subdirectory(testing)
 
-# The umbrella target is INTERFACE because every utility is header-only, so
-# there is no object to link and no translation unit of the library's own. For
-# that reason the version check lives on the host test target. Definitions of
-# the CMake version on this target would propagate build-time values into every
-# installed consumer.
+# Version definitions belong on the host test: INTERFACE definitions here
+# would propagate build-time values into installed consumers.
 add_library(pico_util_core INTERFACE)
 add_library(pico_util::core ALIAS pico_util_core)
 

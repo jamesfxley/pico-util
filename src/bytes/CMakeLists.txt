@@ -1,7 +1,5 @@
 # Wire-format byte access in both byte orders, over fixed-extent and
 # dynamic-extent spans (DR-1..DR-5).
-# The target is INTERFACE and carries only headers, because every module is
-# header-only.
 add_library(pico_util_bytes INTERFACE)
 add_library(pico_util::bytes ALIAS pico_util_bytes)
 
