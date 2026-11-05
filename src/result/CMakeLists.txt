@@ -1,5 +1,5 @@
-# Fallible returns and non-owning callbacks (FR-1..FR-11). Header-only, like
-# every module here, so the target is INTERFACE and carries only its headers.
+# Fallible returns and non-owning callbacks (FR-1..FR-11). The target is
+# INTERFACE and carries only headers, because every module is header-only.
 add_library(pico_util_result INTERFACE)
 add_library(pico_util::result ALIAS pico_util_result)
 

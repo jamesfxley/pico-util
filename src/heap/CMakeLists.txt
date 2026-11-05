@@ -1,5 +1,5 @@
-# Post-init heap-growth observability (MR-1..MR-4, MR-8). Header-only, like every
-# module here, so the target is INTERFACE and carries only its headers.
+# Heap-growth observation after initialisation (MR-1..MR-4, MR-8). The target is
+# INTERFACE and carries only headers, because every module is header-only.
 add_library(pico_util_heap INTERFACE)
 add_library(pico_util::heap ALIAS pico_util_heap)
 
