@@ -1,8 +1,5 @@
 // SPDX-License-Identifier: MIT
-// DR-5: viewing text as bytes without copying. The point of the header is that
-// the span aliases the caller's storage rather than owning a copy, so the
-// address is the assertion that matters -- a version that copied would pass a
-// content comparison and fail these.
+// Address equality distinguishes aliasing from a copy of the same bytes (DR-5).
 #include "pico_util/bytes/as_bytes.hpp"
 
 #include <gtest/gtest.h>
@@ -27,16 +24,16 @@ TEST(AsBytesTest, ViewsTextWithoutCopying) {
     EXPECT_EQ(bytes.back(), static_cast<std::uint8_t>('1'));
 }
 
-// An empty view has a null data() when default-constructed, and a span over a
-// null pointer with a nonzero size would be the bug this guards.
+// A default-constructed view has a null data(). A span over a null pointer with
+// a nonzero size would be the bug this test guards against.
 TEST(AsBytesTest, EmptyTextYieldsAnEmptySpan) {
     EXPECT_TRUE(as_bytes(std::string_view{}).empty());
     EXPECT_EQ(as_bytes(std::string_view{}).size(), 0U);
     EXPECT_TRUE(as_bytes(std::string_view{""}).empty());
 }
 
-// High bytes survive as unsigned values rather than sign-extending through
-// char, which is signed on this target.
+// High bytes keep their unsigned values and are not sign-extended through
+// `char`, which is signed on the host.
 TEST(AsBytesTest, HighBytesReadAsUnsigned) {
     const std::string text = "\x80\xFF";
     const auto bytes = as_bytes(text);

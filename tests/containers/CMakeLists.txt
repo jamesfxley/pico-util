@@ -1,15 +1,12 @@
-# Links pico_util::containers, the module it mirrors, rather than the umbrella:
-# the test tree mirrors src/ so that what a test covers is readable from its
-# path. Threads::Threads for the SPSC counter's concurrency test.
+# Threads::Threads supports the SPSC concurrency test.
 house_cxx_add_module_test(pico_util containers
     SOURCES fixed_string_test.cpp flat_map_test.cpp ring_buffer_test.cpp
             ring_index_test.cpp
     LIBRARIES Threads::Threads
 )
 
-# BR-16's stack clause, measured: the probe is compiled at -O2 with
-# -fstack-usage (as source options, after the strict target's Debug -Og) and a
-# test holds every frame under 1 KiB against a 4 KiB value.
+# The source option puts -O2 after -Og on the compile line, so it wins. The
+# probe checks frames below 1 KiB for a 4 KiB value (BR-16).
 add_library(pico_util_flat_map_stack_probe OBJECT flat_map_stack_probe.cpp)
 target_link_libraries(pico_util_flat_map_stack_probe
     PRIVATE pico_util_strict pico_util::containers)
@@ -21,7 +18,8 @@ add_test(NAME pico_util_flat_map_stack
             -DLIMIT=1024
             -P ${CMAKE_CURRENT_SOURCE_DIR}/flat_map_stack.cmake)
 
-# BR-7 and BR-16's noexcept refusal as build failures; see tests/CMakeLists.txt.
+# Compile-failure probes cover discarded results (BR-7) and throwing values
+# (BR-16).
 pico_util_refusal_probe(pico_util_containers_probe pico_util::containers)
 foreach(PICO_UTIL_PROBE_CASE
         "1;fixed_string_assign" "2;fixed_string_append"

@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: MIT
-// HeapWatermark is the falsifiable half of MR-1 ("zero post-init heap"): it
-// cannot see an alloc/free pair that nets to zero, but it must report steady-
-// state growth. These tests pin the arming contract (MR-8) and the clamping,
-// which every consumer of this library relies on, and skip where MR-2's
-// fallback reports 0.
+// HeapWatermark must report steady-state growth (MR-1). These tests check
+// arming (MR-8) and clamping, and skip the growth cases where the heap cannot
+// be read (MR-2).
 #include "pico_util/heap/heap_watermark.hpp"
 
 #include <gtest/gtest.h>
@@ -17,9 +15,9 @@
 
 using pico_util::HeapWatermark;
 
-// MR-2: on glibc 2.33 or later the header takes the mallinfo2() arm. Without
-// this the suite would pass the same way on the arm that reads nothing, which
-// reports 0 and skips the growth cases.
+// On glibc 2.33 or later the header takes the mallinfo2 branch. Without this
+// check the suite would also pass on the fallback, which reads 0 and skips the
+// growth cases (MR-2).
 #if defined(__GLIBC__) &&                                           \
     (__GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 33)) && \
     !defined(PICO_UTIL_HAVE_MALLINFO2)
@@ -29,13 +27,11 @@ using pico_util::HeapWatermark;
 
 namespace {
 
-// Large enough that the allocator satisfies it with a fresh block rather than
-// out of an existing free-list remnant, but below glibc's default 128 KiB
-// mmap threshold: uordblks counts the main arena only, so an mmap-backed
-// allocation is invisible to this proxy on the host.
+// A fresh block below glibc's default 128 KiB mmap threshold stays visible
+// to uordblks. A free-list remnant could hide growth.
 constexpr std::size_t ALLOCATION_BYTES = std::size_t{64} * 1024;
 
-// MR-4: nothing is reported before a baseline exists.
+// Nothing is reported before a baseline exists (MR-4).
 TEST(HeapWatermarkTest, ReportsNoGrowthBeforeArming) {
     const HeapWatermark watermark;
     EXPECT_FALSE(watermark.armed());
@@ -43,10 +39,8 @@ TEST(HeapWatermarkTest, ReportsNoGrowthBeforeArming) {
     EXPECT_EQ(watermark.growth_bytes(), 0U);
 }
 
-// MR-8: measuring() is checked against the reading itself. With a live block
-// held, a heap that can be read reads nonzero, and one that cannot -- this
-// build's AddressSanitizer leg -- reads 0. CI runs both, so a build whose
-// mallinfo arm is broken fails here rather than skipping the growth cases.
+// A live block distinguishes a readable heap from ASan's zero reading (MR-8).
+// Checking the reading prevents a broken mallinfo branch from skipping growth.
 TEST(HeapWatermarkTest, MeasuringAgreesWithTheReading) {
     const auto block =
         std::make_unique<std::vector<char>>(ALLOCATION_BYTES, 'x');
@@ -74,16 +68,13 @@ TEST(HeapWatermarkTest, ReportsGrowthHeldAfterArming) {
     }
     EXPECT_GE(watermark.growth_bytes(), ALLOCATION_BYTES);
 
-    // Releasing it drops the reported growth again, which is what a
-    // steady-state path that allocates and frees within one request looks
-    // like. The reading does not have to return to exactly zero: anything else
-    // running in this process, the test framework included, also allocates.
+    // Framework allocations can keep the reading above zero after release.
     block.reset();
     EXPECT_LT(watermark.growth_bytes(), ALLOCATION_BYTES);
 }
 
-// MR-4: below the baseline the reading clamps rather than wrapping, which an
-// unsigned subtraction would do silently.
+// Below the baseline the reading clamps and does not wrap, which an unsigned
+// subtraction would do silently (MR-4).
 TEST(HeapWatermarkTest, NetShrinkClampsToZeroRatherThanUnderflowing) {
     auto block = std::make_unique<std::vector<char>>(ALLOCATION_BYTES, 'x');
 
@@ -94,8 +85,8 @@ TEST(HeapWatermarkTest, NetShrinkClampsToZeroRatherThanUnderflowing) {
     EXPECT_EQ(watermark.growth_bytes(), 0U);
 }
 
-// MR-3: a watermark that has never been armed reports nothing, and arming a
-// second time re-baselines rather than accumulating against the first.
+// A watermark that has never been armed reports nothing, and arming a second
+// time sets a new baseline and does not accumulate against the first (MR-3).
 TEST(HeapWatermarkTest, ReArmingRebaselines) {
     HeapWatermark watermark;
     watermark.arm();

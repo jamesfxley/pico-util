@@ -1,10 +1,7 @@
 // SPDX-License-Identifier: MIT
-// BR-16: FlatMap resets a value where it lives, so no whole-value temporary
-// reaches the stack. Compiled with -fstack-usage; flat_map_stack.cmake holds
-// every frame here far below the value's size. The value is shaped like
-// pico-http's HTTPResponse: a member initialised through a function call is
-// what keeps a temporary alive at -O2, where a plain zero-initialised array is
-// folded into the slot and would show nothing.
+// In-place resets avoid whole-value stack temporaries (BR-16).
+// A function-call initialiser keeps temporaries visible at -O2. A zeroed array
+// alone would fold into the slot. flat_map_stack.cmake checks frame sizes.
 #include <array>
 #include <cstdint>
 
@@ -29,8 +26,7 @@ void clear(Map& map) { map.clear(); }
 
 }  // namespace
 
-// Called through volatile pointers, so each function is emitted with its own
-// frame rather than inlined into this one. The object is compiled, never
+// Volatile calls emit separate frames without inlining. The object is not
 // linked.
 int main() {
     static Map map;

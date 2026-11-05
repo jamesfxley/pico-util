@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
-// FixedString<N> (BR-1, BR-2, BR-13). The boundary cases are the whole test: a
-// string of exactly CAPACITY must fit, and an append that would not fit must
-// leave the contents byte-for-byte as they were.
+// FixedString<N> (BR-1, BR-2, BR-13). The boundary cases are the test: a string
+// of exactly CAPACITY must fit, and an append that does not fit must leave the
+// contents unchanged.
 #include "pico_util/containers/fixed_string.hpp"
 
 #include <gtest/gtest.h>
@@ -43,14 +43,13 @@ TEST(FixedStringTest, AppendIsAllOrNothing) {
     EXPECT_TRUE(text.append("defg"));
     EXPECT_EQ(text.view(), "abcdefg");
 
-    // One more character does not fit. The refusal must leave the contents
-    // untouched -- a partial append is a corrupted message, not a short one.
+    // A failed append must leave the contents untouched.
     EXPECT_FALSE(text.append("h"));
     EXPECT_EQ(text.view(), "abcdefg");
     EXPECT_EQ(text.size(), 7U);
     EXPECT_STREQ(text.c_str(), "abcdefg");
 
-    // A refused append that is longer than the whole capacity, likewise.
+    // A failed append longer than the whole capacity does likewise.
     FixedString<8> other;
     EXPECT_TRUE(other.append("ab"));
     EXPECT_FALSE(other.append("cdefghijkl"));
@@ -74,9 +73,7 @@ TEST(FixedStringTest, ViewExcludesTheTerminator) {
     EXPECT_EQ(text.view(), "ab");
 }
 
-// BR-1: the terminator moves with the contents. A shorter string written over
-// a longer one is where a missing NUL shows, because the tail of the old
-// contents is still in the storage.
+// Shortening exposes a missing NUL because the old tail remains (BR-1).
 TEST(FixedStringTest, AShorterStringOverALongerOneStaysTerminated) {
     FixedString<8> text;
     ASSERT_TRUE(text.assign("hello"));
@@ -89,8 +86,7 @@ TEST(FixedStringTest, AShorterStringOverALongerOneStaysTerminated) {
     EXPECT_STREQ(text.c_str(), "h");
 }
 
-// BR-1: truncated() is the only way in from text. A converting constructor
-// would let a long string_view truncate silently wherever one is passed.
+// Only truncated() constructs from text, naming the accepted loss (BR-1).
 TEST(FixedStringTest, TextConvertsOnlyThroughTruncated) {
     static_assert(!std::is_constructible_v<FixedString<8>, std::string_view>);
     static_assert(!std::is_convertible_v<std::string_view, FixedString<8>>);
@@ -98,18 +94,15 @@ TEST(FixedStringTest, TextConvertsOnlyThroughTruncated) {
     SUCCEED();
 }
 
-// BR-6: the storage is a member, so the object is its own buffer.
+// The storage is a member, so the object is its own buffer (BR-6).
 TEST(FixedStringTest, StorageIsInline) {
-    // 64 characters: more than a pointer and a size, so a layout holding its
-    // text elsewhere cannot reach it.
+    // 64 characters is more than a pointer and a size, so a layout that holds
+    // its text elsewhere cannot reach it.
     static_assert(sizeof(FixedString<64>) >= 64);
     SUCCEED();
 }
 
-// BR-1: construction from text is named, because the name is the report. The
-// factory accepts the loss; assign() is what reports it. A converting
-// constructor could do neither, and a truncated value it produced was
-// indistinguishable from one that fitted.
+// The named factory accepts truncation. assign() reports it (BR-1).
 TEST(FixedStringTest, TruncatedNamesTheLossItAccepts) {
     const auto cut = FixedString<8>::truncated("content-length");
     EXPECT_EQ(cut.size(), 7U);
@@ -121,18 +114,13 @@ TEST(FixedStringTest, TruncatedNamesTheLossItAccepts) {
     const auto whole = FixedString<8>::truncated("content");
     EXPECT_EQ(whole.view(), "content");
 
-    // And assign() still reports what the factory swallowed.
+    // assign() still reports what the factory ignored.
     FixedString<8> reported;
     EXPECT_FALSE(reported.assign("content-length"));
     EXPECT_EQ(reported.view(), cut.view());
 }
 
-// BR-13: view() aliases the string's own storage rather than copying it. Two
-// observable consequences, and both are asserted: the view points at the same
-// bytes c_str() does, and a view taken before an assign() sees the new
-// contents -- which is exactly why an assign() invalidates it. A copying view
-// would keep the old text and pass the first assertion only by accident of
-// address.
+// Address equality and a stale view seeing new text establish aliasing (BR-13).
 TEST(FixedStringTest, ViewAliasesTheStorage) {
     FixedString<16> text;
     ASSERT_TRUE(text.assign("abc"));
@@ -143,10 +131,7 @@ TEST(FixedStringTest, ViewAliasesTheStorage) {
     EXPECT_EQ(before, "xyz");
 }
 
-// The noexcept on the three mutators is part of the type's contract rather than
-// a detail: a type holding a FixedString with a default member initialiser is
-// nothrow default-constructible only because of it, and FlatMap refuses a value
-// that is not.
+// nothrow mutators let a nested FixedString value satisfy FlatMap's trait.
 TEST(FixedStringTest, TheMutatorsDoNotThrow) {
     static_assert(noexcept(FixedString<8>::truncated("abc")));
     static_assert(noexcept(std::declval<FixedString<8>&>().assign("abc")));

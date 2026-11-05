@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
-// Refusals of the containers (BR-5, BR-7, BR-16). With PROBE undefined this
-// compiles and is part of every build, so the probe itself is sound; each PROBE
-// value enables one statement the library promises to refuse.
+// Compile-failure probes (BR-5, BR-7, BR-16). With PROBE undefined the file
+// builds normally. Each PROBE value enables one rejected statement.
 #include "pico_util/containers/fixed_string.hpp"
 #include "pico_util/containers/flat_map.hpp"
 #include "pico_util/containers/ring_buffer.hpp"
@@ -36,14 +35,16 @@ using Ring = pico_util::RingBuffer<int, 4, pico_util::SingleContextCounter>;
     Ring ring;
     ring.acquire();  // BR-7
 #elif defined(PROBE) && PROBE == 7
-    // BR-16: a value whose default constructor may throw, once the map is used.
+    // A value whose default constructor can throw, once the map is used
+    // (BR-16).
     pico_util::FlatMap<int, MayThrow, 4> throwing;
     (void)throwing.try_emplace(1);
 #elif defined(PROBE) && PROBE == 8
-    // BR-5: Counter has no default, so a ring naming none does not compile.
+    // Counter has no default, so a ring that names none does not compile
+    // (BR-5).
     pico_util::RingBuffer<int, 4> unnamed;
 #else
-    // The same statements, their results received: these must compile.
+    // The same statements with their results received. These must compile.
     pico_util::FixedString<8> text;
     (void)text.assign("abc");
     (void)text.append("abc");

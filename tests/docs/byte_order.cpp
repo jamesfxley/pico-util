@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// The two byte-order families, over the buffers the usage guide names.
+// The two byte-order families, over the buffers that the usage guide names.
 #include <array>
 #include <cstddef>
 #include <cstdint>

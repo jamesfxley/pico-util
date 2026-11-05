@@ -1,7 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Wrap arithmetic (BR-5's foundation). Tested directly rather than only through
-// RingBuffer, so that a caller using it for a ring the container does not serve
-// has the contract pinned.
+// Direct arithmetic tests cover rings beyond RingBuffer (BR-5).
 #include "pico_util/containers/ring_index.hpp"
 
 #include <gtest/gtest.h>
@@ -16,7 +14,7 @@ using pico_util::RingPosition;
 
 namespace {
 
-// BR-11: advancing wraps at the capacity.
+// Advancing wraps at the capacity (BR-11).
 TEST(RingIndexTest, AdvancesAndWraps) {
     static_assert(ring_index<4>(RingPosition{0}, RingCount{1}).index == 1);
     static_assert(ring_index<4>(RingPosition{3}, RingCount{1}).index == 0);
@@ -29,11 +27,7 @@ TEST(RingIndexTest, AdvancesAndWraps) {
     SUCCEED();
 }
 
-// BR-11. The top of the offset's range, which is where one subtraction stops
-// being enough and the documented bound starts earning its keep. RingBuffer
-// subscripts slots_[] with nothing but this function's return value in between,
-// so a range pinned only from below leaves that subscript unguarded in the
-// direction that runs off the array.
+// The maximum legal offset still wraps to a valid subscript (BR-11).
 TEST(RingIndexTest, AdvancingByTheWholeCapacityReturnsTheSamePosition) {
     static_assert(ring_index<4>(RingPosition{0}, RingCount{4}).index == 0);
     static_assert(ring_index<4>(RingPosition{3}, RingCount{4}).index == 3);
@@ -43,9 +37,8 @@ TEST(RingIndexTest, AdvancingByTheWholeCapacityReturnsTheSamePosition) {
     SUCCEED();
 }
 
-// BR-10. One past each bound is refused rather than answered. A single
-// subtraction would return 4 for a four-slot ring -- in range for nothing, and
-// a subscript off the end of RingBuffer's storage.
+// An out-of-bounds argument asserts instead of yielding an invalid subscript
+// (BR-10).
 TEST(RingIndexTest, AnArgumentPastItsBoundIsRefused) {
 #ifdef NDEBUG
     GTEST_SKIP() << "the bounds are asserts, which NDEBUG removes";
@@ -67,11 +60,11 @@ TEST(RingIndexTest, AnArgumentPastItsBoundIsRefused) {
 #endif
 }
 
-// BR-9: the run is the smaller of the length and the distance to the end.
+// The run is the smaller of the length and the distance to the end (BR-9).
 TEST(RingIndexTest, ReportsTheContiguousRun) {
     // Fits before the wrap.
     static_assert(ring_run<8>(RingPosition{0}, RingCount{3}).elements == 3);
-    // Straddles it: only the part before the end is contiguous.
+    // It straddles the wrap, and only the part before the end is contiguous.
     static_assert(ring_run<8>(RingPosition{6}, RingCount{4}).elements == 2);
     // Ends exactly at the wrap.
     static_assert(ring_run<8>(RingPosition{4}, RingCount{4}).elements == 4);
@@ -82,9 +75,7 @@ TEST(RingIndexTest, ReportsTheContiguousRun) {
     SUCCEED();
 }
 
-// BR-10. ring_run's own bound, in the direction its comment names: `Capacity -
-// start` wraps for a start past the end, the clamp then never fires, and the
-// caller sizes a transport write from a length that runs off the buffer.
+// An invalid start could wrap the subtraction and bypass the clamp (BR-10).
 TEST(RingIndexTest, ARunFromAStartPastTheEndIsRefused) {
 #ifdef NDEBUG
     GTEST_SKIP() << "the bound is an assert, which NDEBUG removes";
@@ -104,10 +95,7 @@ constexpr bool BRACED_SIZES_ACCEPTED =
         pico_util::ring_index<Capacity>({first}, {second});
     };
 
-// BR-8. The reason the parameters are typed at all: a position and a count are
-// both element counts of the same width, so with two bare std::size_t
-// parameters a transposed call compiled and returned a plausible wrong answer.
-// These assertions fail to compile if either type ever gains a conversion.
+// Distinct types reject transposed calls and implicit conversions (BR-8).
 TEST(RingIndexTest, APositionAndACountDoNotConvert) {
     static_assert(!std::convertible_to<RingCount, RingPosition>);
     static_assert(!std::convertible_to<RingPosition, RingCount>);
@@ -115,8 +103,8 @@ TEST(RingIndexTest, APositionAndACountDoNotConvert) {
     static_assert(!std::convertible_to<std::size_t, RingCount>);
     static_assert(!std::convertible_to<RingPosition, std::size_t>);
     static_assert(!std::convertible_to<RingCount, std::size_t>);
-    // A braced argument names no type, so it would build either one from a
-    // bare std::size_t: the transposition the types exist to refuse.
+    // A braced argument names no type, so it would build either type from a
+    // bare std::size_t. That is the transposition the types exist to prevent.
     static_assert(!BRACED_SIZES_ACCEPTED<8>);
     SUCCEED();
 }

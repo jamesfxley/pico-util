@@ -1,10 +1,7 @@
 // SPDX-License-Identifier: MIT
-// FlatMap<K, V, N> (BR-3, BR-4, BR-6, BR-14, BR-15). Erase releases the slot in
-// place and touches no other entry, which is BR-4 and is what makes a pointer
-// held across an unrelated erase stay valid. Entry order is still not part of
-// the contract, so every assertion here is on the *set* of remaining keys and
-// never on their order -- a test that pinned order would pass today and fail on
-// any change to the erase strategy without a real defect behind it.
+// Fixed-capacity map tests (BR-3, BR-4, BR-6, BR-14, BR-15).
+// Entries stay in place after unrelated erases (BR-4). Entry order is
+// unspecified, so assertions check the set of remaining keys, never the order.
 #include "pico_util/containers/flat_map.hpp"
 
 #include <gtest/gtest.h>
@@ -58,14 +55,14 @@ TEST(FlatMapTest, NewKeyAtCapacityIsRefused) {
     for (std::uint8_t key = 1; key <= 4; ++key) {
         ASSERT_NE(table.insert_or_assign(key, key * 10), nullptr);
     }
-    // Refused, not evicted: nothing already present is displaced.
+    // The insert fails and evicts nothing: no existing entry is displaced.
     EXPECT_EQ(table.insert_or_assign(9, 99), nullptr);
     EXPECT_EQ(table.size(), 4U);
     EXPECT_FALSE(table.contains(9));
     EXPECT_EQ(keys_of(table), (std::set<std::uint8_t>{1, 2, 3, 4}));
     EXPECT_EQ(table.value_or(1, -1), 10);
 
-    // A key already present still resolves at capacity, and still replaces.
+    // A key already present is still found at capacity and still replaced.
     ASSERT_NE(table.insert_or_assign(2, 22), nullptr);
     EXPECT_EQ(table.value_or(2, -1), 22);
 }
@@ -75,8 +72,8 @@ TEST(FlatMapTest, EraseLeavesTheRestFindable) {
     for (std::uint8_t key = 1; key <= 4; ++key) {
         ASSERT_NE(table.insert_or_assign(key, key * 10), nullptr);
     }
-    // A middle key: a table that compacted on erase would move an entry here,
-    // which is what BR-4 refuses and what this would then catch.
+    // A middle key. A table that compacted on erase would move an entry here,
+    // which BR-4 forbids and this test would catch.
     EXPECT_TRUE(table.erase(2));
     EXPECT_EQ(table.size(), 3U);
     EXPECT_FALSE(table.contains(2));
@@ -114,7 +111,7 @@ TEST(FlatMapTest, TryEmplaceValueInitialisesANewSlot) {
     ASSERT_NE(slot, nullptr);
     EXPECT_EQ(*slot, 0);
     *slot = 42;
-    // A second call finds the existing entry rather than adding a second one.
+    // A second call finds the existing entry and does not add another.
     int* again = table.try_emplace(3);
     ASSERT_NE(again, nullptr);
     EXPECT_EQ(*again, 42);
@@ -132,21 +129,19 @@ TEST(FlatMapTest, ClearEmptiesWithoutChangingCapacity) {
     EXPECT_TRUE(keys_of(table).empty());
 }
 
-// BR-4: the property a caller holding a pointer depends on and cannot check
-// for itself. Dense storage would fail this -- an unrelated erase would move
-// the last entry into the hole and the pointer would name a different one.
+// An unrelated erase leaves a held pointer naming the same entry (BR-4).
 TEST(FlatMapTest, AnEntryNeverMoves) {
     Table table;
     ASSERT_NE(table.insert_or_assign(1, 10), nullptr);
     ASSERT_NE(table.insert_or_assign(2, 20), nullptr);
     ASSERT_NE(table.insert_or_assign(3, 30), nullptr);
 
-    // The last-inserted entry: the one a swap-erase moves into the hole.
+    // The last-inserted entry is the one that a swap-erase would move into the
+    // hole.
     int* held = table.find(3);
     ASSERT_NE(held, nullptr);
 
-    // Erase a different key, then insert another. Under swap-erase the last
-    // entry lands in key 1's slot and the map repacks; here nothing moves.
+    // A swap-erase would move the held entry into key 1's slot.
     EXPECT_TRUE(table.erase(1));
     EXPECT_NE(table.try_emplace(4), nullptr);
 
@@ -154,7 +149,7 @@ TEST(FlatMapTest, AnEntryNeverMoves) {
     EXPECT_EQ(*held, 30);
 }
 
-// A released slot is reused rather than stranded, so capacity is really
+// A released slot is reused and not stranded, so the capacity is a true
 // capacity and not a high-water mark.
 TEST(FlatMapTest, AReleasedSlotIsReused) {
     Table table;
@@ -170,8 +165,8 @@ TEST(FlatMapTest, AReleasedSlotIsReused) {
     EXPECT_EQ(keys_of(table), (std::set<std::uint8_t>{1, 3, 4, 9}));
 }
 
-// The walk stops when asked, which is what makes a search expressible without
-// exposing the slots a span would have to include.
+// The walk stops when asked, so a search works without exposing the slots that
+// a span would have to include.
 TEST(FlatMapTest, ForEachStopsWhenAsked) {
     Table table;
     ASSERT_NE(table.insert_or_assign(1, 10), nullptr);
@@ -186,22 +181,15 @@ TEST(FlatMapTest, ForEachStopsWhenAsked) {
     EXPECT_EQ(visited, 1);
 }
 
-// BR-6: storage is a member sized at instantiation. The element is wide on
-// purpose: with a four-byte value a map holding a pointer to heap storage is
-// already large enough on LP64 to pass a size floor, so the floor would not
-// tell the two layouts apart.
+// Wide elements distinguish inline storage from a pointer-sized layout (BR-6).
 TEST(FlatMapTest, StorageIsInline) {
     using Wide = FlatMap<std::uint8_t, std::array<char, 64>, 4>;
     static_assert(sizeof(Wide) >= std::size_t{4} * 64U);
     SUCCEED();
 }
 
-// BR-14: erase resets the released value rather than leaving it in place. A
-// value with an observable lifetime is what makes that visible: the map's copy
-// of the pointer is the only other owner, so erase must bring the count back to
-// one. Refilling the slot afterwards would hide a missing reset, because the
-// refill overwrites it -- which is why nothing is inserted here after the
-// erase.
+// Erase must bring the shared count back to one (BR-14).
+// No refill follows: overwriting the slot would hide a missing reset.
 TEST(FlatMapTest, EraseReleasesWhatTheValueOwned) {
     FlatMap<std::uint8_t, std::shared_ptr<int>, 4> table;
     const auto owned = std::make_shared<int>(7);
@@ -212,8 +200,8 @@ TEST(FlatMapTest, EraseReleasesWhatTheValueOwned) {
     EXPECT_EQ(owned.use_count(), 1);
 }
 
-// BR-14's companion for clear(): every live value is released, not only the
-// slot count reset.
+// The companion case for clear() (BR-14): every live value is released, and not
+// only the slot count reset.
 TEST(FlatMapTest, ClearReleasesWhatTheValuesOwned) {
     FlatMap<std::uint8_t, std::shared_ptr<int>, 4> table;
     const auto first = std::make_shared<int>(1);
@@ -227,12 +215,9 @@ TEST(FlatMapTest, ClearReleasesWhatTheValuesOwned) {
     EXPECT_EQ(table.size(), 0U);
 }
 
-// BR-16's refusal of a throwing V must not refuse a nested value type. A struct
-// with default member initialisers declared inside the class that holds the
-// map is not yet usable for its initialisers while that class is incomplete,
-// so a class-scope trait check reads it as throwing and fails the build --
-// which is how pico-bno085 declares its table. The inserted value is also the
-// value-initialised one, default member initialisers included.
+// The throwing-V rejection must not apply to a nested value type (BR-16).
+// The enclosing class is incomplete at the map declaration. Checking the trait
+// there would reject a value that is nothrow once the class is complete.
 struct Holder {
     struct Entry {
         int count = 1;
@@ -250,9 +235,8 @@ TEST(FlatMapTest, AValueNestedInItsHolderIsAccepted) {
     EXPECT_TRUE(holder.map.erase(1));
 }
 
-// BR-15: a visitor may erase the entry it is visiting. The walk continues over
-// the remaining live slots and visits each exactly once, and the map is
-// consistent afterwards.
+// A visitor may erase the current entry and still visit each live slot once
+// (BR-15).
 TEST(FlatMapTest, AVisitorMayEraseTheEntryItIsVisiting) {
     Table table;
     for (std::uint8_t key = 1; key <= 4; ++key) {
@@ -271,25 +255,16 @@ TEST(FlatMapTest, AVisitorMayEraseTheEntryItIsVisiting) {
     EXPECT_EQ(table.size(), 2U);
 }
 
-// BR-3: a mutating walk cannot rewrite a key. Two live slots under one key are
-// unreconcilable -- find() and try_emplace() resolve to the first, erase()
-// removes one and decrements size_ once -- so the visitor sees the key by
-// const reference and the value by mutable one.
+// A mutating walk cannot rewrite a key (BR-3), so the visitor receives the key
+// by const reference and the value by mutable reference.
 TEST(FlatMapTest, AVisitorCannotRewriteAKey) {
     Table table;
     ASSERT_NE(table.insert_or_assign(1, 10), nullptr);
     ASSERT_NE(table.insert_or_assign(2, 20), nullptr);
 
-    // The constness is asserted inside the visitor, on the type for_each
-    // deduces into it. That binds the check to the real call: drop the
-    // std::as_const() in for_each and this static_assert fires.
-    //
-    // It cannot be asserted from outside. for_each is an unconstrained
-    // template, so a visitor taking the key by mutable reference is a hard
-    // error in the body rather than a substitution failure -- is_invocable_v
-    // and a requires-expression both report it callable either way, and an
-    // assertion written over a bare function pointer states a property of the
-    // language rather than one of this map.
+    // Checking the deduced type inside the visitor catches a missing
+    // as_const(). It cannot be checked from outside: a mutable-key call fails
+    // in the unconstrained body, not by substitution.
     table.for_each([](auto&& key, int& value) {
         static_assert(std::is_const_v<std::remove_reference_t<decltype(key)>>,
                       "for_each must pass the key by const reference (BR-3)");

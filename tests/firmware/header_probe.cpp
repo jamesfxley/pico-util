@@ -1,12 +1,7 @@
 // SPDX-License-Identifier: MIT
-// AR-2's cross-compiled probe: the same headers a host test uses, compiled and
-// linked for the target with no consumer-side conditionals.
-//
-// Nothing runs this. It exists so the linker has to resolve everything the
-// umbrella header pulls in, which is what turns "it compiles" into "it also
-// links on a freestanding target". A header that reached for a hosted facility
-// -- <iostream>, an exception path, a heap-assuming container -- fails here
-// rather than in the first firmware consumer's build.
+// The same headers compile and link freestanding without consumer conditionals
+// (AR-2). Linking catches hosted facilities that inclusion alone cannot.
+// Nothing runs it.
 #include <array>
 #include <cstdint>
 #include <span>
@@ -22,17 +17,15 @@
 #include "pico_util/result/callback.hpp"
 #include "pico_util/result/result.hpp"
 
-// A minimal taxonomy: Result is parameterised on the consumer's error type, so
-// the probe has to supply one to instantiate it at all.
+// A consumer-owned error type instantiates Result.
 enum class ProbeError : unsigned char { NONE = 0, FAILED };
 
 int main() {
     pico_util::HeapWatermark watermark;
     watermark.arm();
 
-    // Instantiating one entity per module is what turns "the umbrella compiles"
-    // into "it also links freestanding", and it is where the footprint figure
-    // comes from -- including a template header instantiates nothing.
+    // Instantiation exercises each module for the footprint gate. Inclusion
+    // alone does not.
     std::array<std::uint8_t, 8> buffer{};
     pico_util::write_be_at<0, std::uint32_t>(std::span<std::uint8_t, 8>{buffer},
                                              0xDEADBEEF);
@@ -46,26 +39,22 @@ int main() {
     const pico_util::Result<int, ProbeError> bad_result = ProbeError::FAILED;
     const pico_util::Callback<void(int)> unbound;
 
-    // Function-local, and every capacity small: a container at namespace scope
-    // would land in .bss and the static-RAM budget would be measuring the
-    // probe's own choices rather than the headers'.
+    // Local containers keep the probe's own storage out of the static-RAM
+    // budget.
     unbound(1);
 
     auto label = pico_util::FixedString<32>::truncated("probe");
-    // Discarded deliberately: this probe exists to instantiate and link the
-    // headers freestanding, not to check what they report.
+    // The result is discarded on purpose. The probe instantiates and links the
+    // headers freestanding and does not check what they report.
     static_cast<void>(label.append("!"));
     pico_util::FlatMap<std::uint8_t, std::uint32_t, 4> table;
     static_cast<void>(table.insert_or_assign(1, 100));
     pico_util::RingBuffer<std::uint32_t, 4, pico_util::SingleContextCounter>
         ring;
     static_cast<void>(ring.push(7));
-    // CR-9's counter, instantiated so both boards have to link it. On ARMv6-M a
-    // read-modify-write on a shared count compiles to a call into the atomic
-    // runtime, which a freestanding link cannot resolve -- so a regression to
-    // one fails the pico_w leg here rather than taking a spinlock in a
-    // consumer's interrupt handler. Both sides and reset, so every member of
-    // the counter is emitted and has to link.
+    // The counter links on both boards (CR-9). An ARMv6-M read-modify-write
+    // would need an unavailable atomic runtime. Calling both sides and reset
+    // emits every member to catch that regression.
     pico_util::RingBuffer<std::uint32_t, 4, pico_util::SpscCounter> spsc;
     static_cast<void>(spsc.push(8));
     static_cast<void>(spsc.push(9));
@@ -82,8 +71,8 @@ int main() {
         std::uint64_t, pico_util::PublishStrategy::SLOT_RING_READER_MAY_PREEMPT>
         clock;
     clock.store(43);
-    // Returned rather than discarded so the call cannot be optimised away
-    // before the linker has had to resolve it.
+    // The value is returned so that the call cannot be optimised away before
+    // the linker has had to resolve it.
     return static_cast<int>(watermark.growth_bytes()) +
            static_cast<int>(pico_util::HeapWatermark::in_use_bytes()) +
            static_cast<int>(decoded >> 24U) + static_cast<int>(text.size()) +

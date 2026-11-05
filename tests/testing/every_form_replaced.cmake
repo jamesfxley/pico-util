@@ -1,8 +1,5 @@
-# MR-5: the executable defines all twenty replaceable allocation and
-# deallocation functions. The standard's default nothrow and array forms
-# forward to the scalar ones, so a form left unreplaced still reaches the
-# counter and no behavioural case can see it missing; its symbol can be.
-#
+# Symbols detect all twenty replacements (MR-5). Default array/nothrow
+# forwarding can reach a replaced scalar function and hide a missing form.
 #   cmake -DNM=<nm> -DEXECUTABLE=<path> -P every_form_replaced.cmake
 execute_process(
     COMMAND "${NM}" -C --defined-only "${EXECUTABLE}"

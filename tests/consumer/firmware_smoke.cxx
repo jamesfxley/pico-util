@@ -1,7 +1,5 @@
 // SPDX-License-Identifier: MIT
-// The installed package, consumed by a firmware program. It builds against the
-// prefix `cmake --install` staged, links every exported module and the SDK's
-// standard library, and is never run: a probe image has no board to run on.
+// The staged package links every module with the SDK. This image is not run.
 #include <array>
 #include <cstdint>
 #include <span>

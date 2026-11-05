@@ -1,10 +1,7 @@
 // SPDX-License-Identifier: MIT
-// RingBuffer<T, N, Counter> (BR-5). The FIFO-across-a-wrap case is what a ring
-// exists for and is where an off-by-one hides, so it runs 2N+1 elements rather
-// than filling once. The SPSC leg runs two real threads, which establishes FIFO
-// order under real concurrency and nothing about memory ordering: the host is
-// x86, whose own ordering is strong enough that a missing acquire or release
-// passes. CR-9's ordering is held by review, which its row says.
+// FIFO tests cross repeated wraps (BR-5).
+// Two threads establish FIFO under concurrency. Missing acquire/release
+// can still pass on x86, so ordering remains review-only (CR-9).
 #include "pico_util/containers/ring_buffer.hpp"
 
 #include <gtest/gtest.h>
@@ -29,8 +26,8 @@ TEST(RingBufferTest, PreservesFifoAcrossAWrap) {
     EXPECT_TRUE(ring.empty());
     EXPECT_EQ(ring.capacity(), 4U);
 
-    // 2N + 1 elements through a ring of N, so every slot is reused twice and a
-    // cursor that failed to wrap shows up as an out-of-order read.
+    // 2N + 1 elements go through a ring of N, so every slot is reused twice and
+    // a cursor that failed to wrap shows up as an out-of-order read.
     for (int value = 0; value < 9; ++value) {
         ASSERT_TRUE(ring.push(value));
         const auto* head = ring.front();
@@ -40,8 +37,8 @@ TEST(RingBufferTest, PreservesFifoAcrossAWrap) {
     }
     EXPECT_TRUE(ring.empty());
 
-    // And with the ring held part-full across the wrap, rather than drained
-    // between every push.
+    // The same again with the ring held part-full across the wrap and not
+    // drained between pushes.
     for (int value = 0; value < 3; ++value) {
         ASSERT_TRUE(ring.push(value));
     }
@@ -62,7 +59,8 @@ TEST(RingBufferTest, PushAtCapacityIsRefused) {
     EXPECT_TRUE(ring.full());
     EXPECT_EQ(ring.size(), 4U);
 
-    // Refused, not overwritten: the oldest element is still the oldest.
+    // The push fails and does not overwrite: the oldest element is still the
+    // oldest.
     EXPECT_FALSE(ring.push(99));
     EXPECT_EQ(ring.size(), 4U);
     const auto* head = ring.front();
@@ -71,7 +69,7 @@ TEST(RingBufferTest, PushAtCapacityIsRefused) {
     EXPECT_EQ(ring.acquire(), nullptr);
 }
 
-// BR-12: a slot is filled in place and committed.
+// A slot is filled in place and then committed (BR-12).
 TEST(RingBufferTest, AcquireAndCommitFillInPlace) {
     RingBuffer<std::array<std::uint8_t, 4>, 2, SingleContextCounter> ring;
     auto* slot = ring.acquire();
@@ -129,9 +127,9 @@ TEST(RingBufferTest, CapacityOfOne) {
     EXPECT_EQ(*next, 2);
 }
 
-// BR-5 under real concurrency: a producer and a consumer in separate threads.
-// Every value the consumer sees must be one the producer sent, in order, with
-// no gap and no duplicate.
+// A producer and a consumer on separate threads (BR-5). Every value the
+// consumer sees must be one that the producer sent, in order, with no gap and
+// no duplicate.
 TEST(RingBufferTest, SpscRingCarriesEveryValueInOrder) {
     constexpr int TOTAL = 20000;
     RingBuffer<int, 8, SpscCounter> ring;
@@ -165,12 +163,11 @@ TEST(RingBufferTest, SpscRingCarriesEveryValueInOrder) {
     EXPECT_TRUE(ring.empty());
 }
 
-// The counter is a policy, not a default: naming it is what makes the
-// assumption reviewable at the declaration site.
+// The counter is a policy with no default, so naming it makes the assumption
+// reviewable at the declaration.
 TEST(RingBufferTest, BothCounterPoliciesInstantiate) {
-    // BR-6: slots are a member, so each ring is at least its own storage. The
-    // element is wide on purpose: with an int, a ring holding a pointer to heap
-    // storage is already large enough on LP64 to pass the floor.
+    // Wide elements distinguish inline storage from pointer-sized layouts
+    // (BR-6).
     using Wide = std::array<char, 64>;
     static_assert(sizeof(RingBuffer<Wide, 4, SingleContextCounter>) >=
                   std::size_t{4} * 64U);
@@ -181,10 +178,8 @@ TEST(RingBufferTest, BothCounterPoliciesInstantiate) {
     SUCCEED();
 }
 
-// BR-5: a commit() with no successful acquire() is a caller bug the container
-// cannot detect, but it must not convert a refusing ring into an evicting one.
-// full() tests `>= N`, so the count running past capacity costs the one slot
-// that bug published and nothing after it.
+// An unacquired commit is undetectable (BR-5). It must not allow eviction.
+// The >= N full check keeps later pushes failing after an over-commit.
 TEST(RingBufferTest, AnOverCommittedRingStillRefuses) {
     Ring ring;
     for (int value = 0; value < 4; ++value) {
@@ -193,7 +188,7 @@ TEST(RingBufferTest, AnOverCommittedRingStillRefuses) {
     ASSERT_TRUE(ring.full());
     ASSERT_EQ(ring.acquire(), nullptr);
 
-    // The caller bug: publish a slot acquire() refused to hand out.
+    // The caller bug: publish a slot that acquire() declined to hand out.
     ring.commit();
 
     EXPECT_TRUE(ring.full());

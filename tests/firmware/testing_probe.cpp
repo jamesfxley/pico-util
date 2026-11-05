@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
-// AR-2: compilation compatibility of the counting header, guard and count.
-// Allocation behavior belongs to host tests; no RMW allocator exercise here.
+// Compilation compatibility of the counting header, guard and count (AR-2).
+// Host tests cover allocation behaviour, and there is no read-modify-write
+// allocator exercise here.
 #include "pico_util/testing/allocation_counter.hpp"
 
 int main() {

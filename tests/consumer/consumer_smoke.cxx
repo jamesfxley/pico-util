@@ -1,9 +1,6 @@
 // SPDX-License-Identifier: MIT
-// AR-3: consumer-side view of the installed package. Nothing here reaches into
-// the source tree: every header below must arrive through the installed
-// pico_util::core INTERFACE target, resolved by find_package, so a header the
-// package fails to ship is a compile error in this test rather than a discovery
-// made by the first downstream project.
+// The installed package supplies every header through find_package (AR-3).
+// No source-tree paths can hide a missing installed header.
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -14,12 +11,11 @@
 #include "pico_util/pico_util.hpp"
 #include "pico_util/testing/allocation_counter.hpp"
 
-// MR-5: deliberately NOT reached through the umbrella. This is the one
-// translation unit of this executable, which is what the header requires.
+// This header is not reached through the umbrella, by design (MR-5). This is
+// the one translation unit of the executable, as the header requires.
 #include "pico_util/testing/allocation_operators.ipp"
 
-// Result is parameterised on the consumer's own error type; this stands in for
-// one a downstream project would define.
+// The consumer supplies its own error taxonomy.
 enum class SmokeError : unsigned char { NONE = 0, FAILED };
 
 int main() {
@@ -37,8 +33,8 @@ int main() {
         return 1;
     }
 
-    // DR-1..DR-5: the bytes module has to arrive through the umbrella too, and
-    // be usable from a consumer's own translation unit.
+    // The bytes module arrives through the umbrella too and is usable from a
+    // consumer's own translation unit (DR-1..DR-5).
     std::array<std::uint8_t, 4> field{};
     pico_util::write_be_at<0, std::uint32_t>(std::span<std::uint8_t, 4>{field},
                                              0xCAFEF00D);
@@ -50,7 +46,7 @@ int main() {
         return 1;
     }
 
-    // FR-1..FR-11: the result module through the umbrella too.
+    // The result module arrives through the umbrella too (FR-1..FR-11).
     const pico_util::Result<int, SmokeError> good = 11;
     const pico_util::Result<int, SmokeError> bad = SmokeError::FAILED;
     if (!good.ok() || good.value() != 11 || bad.ok() ||
@@ -63,7 +59,7 @@ int main() {
         return 1;
     }
 
-    // BR-1..BR-16: the containers module through the umbrella too.
+    // The containers module arrives through the umbrella too (BR-1..BR-16).
     auto label = pico_util::FixedString<16>::truncated("pico");
     pico_util::FlatMap<int, int, 4> table;
     if (table.insert_or_assign(1, 10) == nullptr) {
@@ -77,8 +73,7 @@ int main() {
         ring.size() != 1U) {
         return 1;
     }
-    // ring_index.hpp is exported and pico-http depends on it, so the umbrella's
-    // reach has to cover it here too.
+    // The umbrella also reaches the ring arithmetic used by pico-http.
     const pico_util::RingPosition next = pico_util::ring_index<4>(
         pico_util::RingPosition{3}, pico_util::RingCount{2});
     if (next.index != 1U || pico_util::ring_run<4>(pico_util::RingPosition{3},
@@ -87,7 +82,7 @@ int main() {
         return 1;
     }
 
-    // CR-1..CR-10: the publish module through the umbrella too.
+    // The publish module arrives through the umbrella too (CR-1..CR-10).
     pico_util::Published<
         std::uint64_t,
         pico_util::PublishStrategy::SEQLOCK_WRITER_NOT_PREEMPTIBLE>
@@ -100,8 +95,7 @@ int main() {
         return 1;
     }
 
-    // MR-5, MR-6: the harness has to survive installation, since its consumers
-    // are sibling repositories' test trees rather than this one's.
+    // Sibling test trees consume the installed harness (MR-5, MR-6).
     {
         const pico_util::testing::AllocationGuard counted;
         const std::vector<char> probe(256, 'y');
@@ -110,8 +104,7 @@ int main() {
         }
     }
 
-    // MR-1's proxy has to be usable from a consumer's own translation unit, not
-    // only from inside this repository's tests.
+    // HeapWatermark also works in a consumer's translation unit (MR-1).
     const std::vector<char> block(std::size_t{64} * 1024, 'x');
     std::printf("growth=%zu in_use=%zu\n", watermark.growth_bytes(),
                 pico_util::HeapWatermark::in_use_bytes());

@@ -1,7 +1,5 @@
-# EN-03.5: the C++ examples in the README and the usage guide, compiled from
-# those documents. Each harness here supplies only what its example leaves out;
-# the example itself is read out of the document at configure time, so an API
-# change that breaks one fails this build.
+# Examples are read from Markdown at configure time. Harnesses supply what the
+# examples omit, so an API change that breaks an example fails this build.
 house_cxx_add_doc_examples(pico_util_doc_examples PACKAGE pico_util
     DOCUMENTS ${PROJECT_SOURCE_DIR}/README.md
               ${PROJECT_SOURCE_DIR}/docs/usage-guide.md

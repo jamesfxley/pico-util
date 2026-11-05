@@ -1,14 +1,6 @@
 // SPDX-License-Identifier: MIT
-// Published<T, Strategy> (CR-1..CR-10). Both strategies are exercised under two
-// real threads, because a publication protocol read only single-threaded is a
-// protocol nothing has tested: a torn read needs a writer running underneath
-// the reader to appear at all.
-//
-// The values published are constructed so that a splice of two of them is
-// detectable. A counter whose halves are (n, ~n) means any mismatched pair of
-// words is a torn read, which a plain increasing counter would hide -- splicing
-// the high half of 0x0000_0001 onto the low half of 0x0000_0002 yields a value
-// that looks perfectly ordinary.
+// Concurrent publication tests detect spliced values (CR-1..CR-10).
+// Complementary halves expose splices that plain counters can hide.
 #include "pico_util/publish/published.hpp"
 
 #include <gtest/gtest.h>
@@ -35,7 +27,7 @@ namespace {
 constexpr auto SEQLOCK = PublishStrategy::SEQLOCK_WRITER_NOT_PREEMPTIBLE;
 constexpr auto SLOT_RING = PublishStrategy::SLOT_RING_READER_MAY_PREEMPT;
 
-// High half is the complement of the low half, so any splice is visible.
+// The high half is the complement of the low half, so any splice is visible.
 constexpr std::uint64_t checked(std::uint32_t n) {
     return (static_cast<std::uint64_t>(~n) << 32U) | n;
 }
@@ -46,19 +38,15 @@ constexpr bool is_intact(std::uint64_t value) {
     return high == ~low;
 }
 
-// A slot-ring read the test expects to validate, failing the case if it did
-// not. Single-threaded reads always validate, so a failure here is the reader's
-// validation being wrong rather than a writer lapping it.
+// A single-threaded read always validates. Exhaustion here is a defect.
 template <typename T>
 T validated(const pico_util::Result<T, pico_util::PublishedReadError>& read) {
     EXPECT_TRUE(read.ok()) << "the slot-ring read was not validated";
     return read.value_or(T{});
 }
 
-// CR-1: the primary template is declared and not defined, so a strategy is
-// mandatory. Both named ones instantiate here; that the unstrategied form fails
-// is the pico_util_refuses_published_without_strategy build-failure test, since
-// naming it in this file would fail this build.
+// Both strategies instantiate. pico_util_refuses_published_without_strategy
+// checks that omitting the strategy fails to compile (CR-1).
 TEST(PublishedTest, BothStrategiesInstantiate) {
     static_assert(
         std::is_default_constructible_v<Published<std::uint64_t, SEQLOCK>>);
@@ -67,7 +55,7 @@ TEST(PublishedTest, BothStrategiesInstantiate) {
     SUCCEED();
 }
 
-// CR-6: nothing is published before the first store.
+// Nothing is published before the first store (CR-6).
 TEST(PublishedTest, ReportsNothingPublishedBeforeTheFirstStore) {
     const Published<std::uint64_t, SEQLOCK> seqlock;
     EXPECT_FALSE(seqlock.published());
@@ -78,10 +66,8 @@ TEST(PublishedTest, ReportsNothingPublishedBeforeTheFirstStore) {
     EXPECT_EQ(validated(ring.load()), 0U);
 }
 
-// CR-8: before the first store, load() returns T{} -- not the all-bits-zero
-// value the words start as. The two coincide for std::uint64_t, which is why
-// the case above cannot tell them apart; a default member initialiser is what
-// separates them.
+// Before a store, load() returns T{}, not zeroed words (CR-8).
+// A default member initialiser makes the two distinguishable.
 struct Defaulted {
     std::int32_t value = 5;
 };
@@ -94,7 +80,7 @@ TEST(PublishedTest, ReturnsTheValueInitialisedTBeforeTheFirstStore) {
     EXPECT_EQ(validated(ring.load()).value, 5);
 }
 
-// CR-6: published() turns true on a store and stays true.
+// published() becomes true on a store and stays true (CR-6).
 TEST(PublishedTest, RoundTripsAValueThroughBothStrategies) {
     Published<std::uint64_t, SEQLOCK> seqlock;
     seqlock.store(0x0123456789ABCDEF);
@@ -109,14 +95,13 @@ TEST(PublishedTest, RoundTripsAValueThroughBothStrategies) {
     EXPECT_TRUE(ring.published());
     EXPECT_EQ(validated(ring.load()), 0x0123456789ABCDEFU);
 
-    // Republished values are seen, and published() never goes back.
+    // Republished values are seen, and published() never goes back to false.
     ring.store(1);
     EXPECT_EQ(validated(ring.load()), 1U);
     EXPECT_TRUE(ring.published());
 }
 
-// A payload wider than one word, so the value spans several of them. Its size
-// is a whole number of words; the round-up is the test below.
+// This payload occupies whole words. The next case covers rounding.
 TEST(PublishedTest, CarriesAStructWiderThanAWord) {
     struct Sample {
         std::uint32_t ticks;
@@ -133,11 +118,7 @@ TEST(PublishedTest, CarriesAStructWiderThanAWord) {
     EXPECT_EQ(read.code, 0x1234U);
 }
 
-// The word count rounds up, so a payload that is not a whole number of words
-// still gets a word to spill into. Nothing else in the tree instantiates such a
-// type, and without one PUBLISHED_WORD_COUNT's round-up term is never
-// evaluated: truncating it to a plain division would write sizeof(T) bytes
-// through a word array one word short, off the end of the writer's stack.
+// A partial final word needs rounding up to avoid overflowing the word array.
 TEST(PublishedTest, CarriesATypeThatIsNotAWholeNumberOfWords) {
     struct Odd {
         std::uint16_t a;
@@ -165,9 +146,9 @@ TEST(PublishedTest, CarriesATypeThatIsNotAWholeNumberOfWords) {
     EXPECT_EQ(from_ring.c, 0x6666U);
 }
 
-// CR-2: the seqlock's direction -- the writer cannot be preempted by the
-// reader. Under a concurrent writer, every value the reader observes must be
-// one the writer published whole.
+// The seqlock direction, where the reader cannot preempt the writer (CR-2).
+// Under a concurrent writer, every value the reader observes must be one that
+// the writer published whole.
 TEST(PublishedTest, SeqlockReaderNeverObservesATornValue) {
     constexpr std::uint32_t ROUNDS = 200000;
     Published<std::uint64_t, SEQLOCK> published;
@@ -183,9 +164,8 @@ TEST(PublishedTest, SeqlockReaderNeverObservesATornValue) {
     std::uint64_t reads = 0;
     std::optional<std::uint64_t> torn;
     while (!done.load(std::memory_order_acquire)) {
-        // Before the first store the value is value-initialised, which is not
-        // a checked pair and would read as torn. published() going true is
-        // ordered after a completed store, so past it every value is whole.
+        // Before the first store, T{} is not a checked pair. The flag is
+        // published after a complete store, so true makes the check meaningful.
         if (!published.published()) {
             continue;
         }
@@ -196,10 +176,8 @@ TEST(PublishedTest, SeqlockReaderNeverObservesATornValue) {
         }
         ++reads;
     }
-    // Join before asserting, on every path out of the loop. ASSERT_* expands to
-    // a return from the test body, which would run ~thread on a joinable thread
-    // and call std::terminate() -- losing the very failure it was reporting,
-    // along with the rest of the cases in this binary.
+    // Join before asserting: ASSERT_* can return and terminate a joinable
+    // thread.
     writer.join();
     EXPECT_FALSE(torn.has_value()) << "torn read: " << torn.value_or(0);
     EXPECT_TRUE(is_intact(published.load()));
@@ -207,20 +185,11 @@ TEST(PublishedTest, SeqlockReaderNeverObservesATornValue) {
     EXPECT_EQ(published.load(), checked(ROUNDS));
 }
 
-// CR-3: the slot ring's direction -- the reader may preempt the writer, so it
-// must never spin, and a value it reports as validated was published whole
-// whatever the writer does. Both hold unconditionally, so the writer here is
-// deliberately unthrottled and outside its own contract. If load() could spin,
-// this loop would never finish; if the validation let a lapped read through, a
-// torn value would arrive as a success. An exhausted read is the writer's
-// contract failing and is reported rather than returned, so it is counted and
-// not asserted on.
-//
-// The payload is 64 words, every one set to the round number, so a read the
-// writer laps part-way through is visible as mixed words. Whether a lap lands
-// inside a read at all depends on thread timing, so this case exercises the
-// protocol under a real concurrent writer without being able to prove the
-// predicate right; SlotReadValidatesOnlyBelowALap above is what pins that.
+// The unthrottled writer deliberately breaks its rate contract (CR-3).
+// The reader must never spin. Validated words are whole whatever the writer
+// does. Exhaustion is counted, not asserted on. A 64-word payload exposes laps.
+// Their timing is statistical, so SlotReadValidatesOnlyBelowALap checks the
+// predicate deterministically.
 struct Wide {
     std::array<std::uint32_t, 64> words{};
 };
@@ -231,11 +200,9 @@ bool is_whole(const Wide& value) {
     });
 }
 
-// CR-2, CR-8: a read racing the first store returns either T{} or the value
-// stored, never the zeroed words the storage starts as. The window is between
-// a validated snapshot and the read of the published flag, so each object is
-// stored once while a reader spins on it; a correct reader can never produce
-// the zeroed value, so this can miss the defect but never fail spuriously.
+// A first-store race returns T{} or the stored value, never zeroed words (CR-2,
+// CR-8). Each object is stored once. Timing can miss the defect but cannot
+// invent it.
 TEST(PublishedTest, SeqlockReadRacingTheFirstStoreIsNeverZeroedWords) {
     constexpr std::size_t OBJECTS = 2000000;
     constexpr int ROUNDS = 5;
@@ -291,7 +258,7 @@ TEST(PublishedTest, SlotRingReaderNeverSpinsAndNeverValidatesATornValue) {
             ++torn;
         }
     }
-    // Join before asserting: an ASSERT_* return would run ~thread on a
+    // Join before asserting. An ASSERT_* return would run ~thread on a
     // joinable thread and call std::terminate().
     writer.join();
     EXPECT_EQ(torn, 0U) << "torn values reported as validated";
@@ -300,17 +267,11 @@ TEST(PublishedTest, SlotRingReaderNeverSpinsAndNeverValidatesATornValue) {
     EXPECT_EQ(validated(published.load()).words[0], ROUNDS);
 }
 
-// CR-10: the validation arithmetic, pinned at its boundaries. With four slots
-// the writer reaches the slot a reader chose after three stores, so a read
-// across zero, one or two completed stores validates and a read across three
-// or more does not -- including across the counter's wrap, where the
-// difference is taken in 32 bits. This is the deterministic half of CR-3: the
-// concurrent case below cannot reliably catch a predicate off by one, because
-// whether a writer laps a read part-way through depends on thread timing.
+// Validation boundaries, including 32-bit wrap, are deterministic (CR-10).
+// This pins the arithmetic that a concurrent test cannot reliably prove (CR-3).
 TEST(PublishedTest, SlotReadValidatesOnlyBelowALap) {
     using pico_util::detail::slot_read_validates;
-    // CR-10 states these values. The header could change them and every other
-    // case would still pass; a consumer's writer contract would not.
+    // A consumer's writer contract depends on these exact values (CR-10).
     using Ring = Published<std::uint32_t, SLOT_RING>;
     static_assert(Ring::SLOT_COUNT == 4);
     static_assert(Ring::MAX_READ_ATTEMPTS == 3);
@@ -328,14 +289,8 @@ TEST(PublishedTest, SlotReadValidatesOnlyBelowALap) {
     SUCCEED();
 }
 
-// CR-4: within the writer contract -- stores rare relative to a read -- every
-// value the reader observes is one published whole.
-//
-// The throttle is the contract, not a workaround for a flaky test. A writer
-// storing in a tight loop laps the four-slot ring inside a single read, which
-// no ring of any depth survives; pico-time's wall clock, the design this is
-// promoted from, stores at most once a second. A test that ignored the
-// contract would be measuring a case the strategy never claimed.
+// Rare stores implement the writer contract. The test checks intact values
+// (CR-4).
 TEST(PublishedTest, SlotRingReaderNeverTearsWithinTheWriterContract) {
     constexpr std::uint32_t ROUNDS = 2000;
     Published<std::uint64_t, SLOT_RING> published;
@@ -356,10 +311,9 @@ TEST(PublishedTest, SlotRingReaderNeverTearsWithinTheWriterContract) {
             continue;
         }
         const auto read = published.load();
-        // Within the contract a read validates. It can still exhaust if this
-        // thread is descheduled for longer than three stores take, which a
-        // loaded CI host does; that is reported, not returned, so it is
-        // skipped rather than treated as a failure of the strategy.
+        // A host read descheduled across three stores can exhaust, so this
+        // case skips errors. SlotReadValidatesOnlyBelowALap checks success
+        // within bounds deterministically.
         if (!read.ok()) {
             continue;
         }
@@ -369,28 +323,21 @@ TEST(PublishedTest, SlotRingReaderNeverTearsWithinTheWriterContract) {
         }
         ++reads;
     }
-    // Join before asserting, on every path out of the loop. ASSERT_* expands to
-    // a return from the test body, which would run ~thread on a joinable thread
-    // and call std::terminate() -- losing the very failure it was reporting,
-    // along with the rest of the cases in this binary.
+    // Join before asserting: ASSERT_* can return and terminate a joinable
+    // thread.
     writer.join();
     EXPECT_FALSE(torn.has_value()) << "torn read: " << torn.value_or(0);
     EXPECT_GT(reads, 0U);
     EXPECT_EQ(validated(published.load()), checked(ROUNDS));
 }
 
-// CR-5: every atomic is 32 bits wide, so a 64-bit payload never reaches
-// __atomic_load_8 -- which the SDK implements as a global spinlock with
-// interrupts disabled, the opposite of what either strategy is for.
+// A 64-bit payload uses only 32-bit atomics (CR-5).
 TEST(PublishedTest, PublicationUsesThirtyTwoBitAtomicsOnly) {
     static_assert(std::atomic<std::uint32_t>::is_always_lock_free);
 
-    // Alignment, not size. Swapping the word array for a std::atomic<uint64_t>
-    // leaves sizeof unchanged -- 16 and 40 either way, because the padding the
-    // wider alignment demands is exactly the space the extra words occupied --
-    // so a size bound cannot see the substitution this test exists to refuse.
-    // A 64-bit atomic aligns to 8 and drags its enclosing object's alignment
-    // with it, which is the property that does separate them.
+    // A 64-bit atomic raises alignment to 8 but leaves size unchanged:
+    // padding replaces the extra words. Only alignment detects that
+    // substitution.
     static_assert(
         alignof(Published<std::uint64_t, SLOT_RING>) == alignof(std::uint32_t),
         "an atomic wider than a word would raise the alignment");

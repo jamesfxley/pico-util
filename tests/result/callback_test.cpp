@@ -1,8 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Callback<Ret(Args...)> (FR-5, FR-10). The empty-is-a-no-op contract is the
-// one that matters: it is what lets a sink be left unbound without a null check
-// at every call site, so a test that only ever invokes bound callbacks proves
-// nothing.
+// Empty-callback and member-binding tests (FR-5, FR-10).
 #include "pico_util/result/callback.hpp"
 
 #include <gtest/gtest.h>
@@ -23,9 +20,7 @@ class Counter {
    public:
     void bump(int by) { total_ += by; }
 
-    // Reads and mutates total_ deliberately: a scale() that ignored the
-    // object would pass through a static trampoline just as well and prove
-    // nothing about bind() reaching the bound instance.
+    // Instance state distinguishes binding from a static trampoline.
     int scale(int by, int times) {
         ++calls_;
         return (by + total_) * times;
@@ -47,11 +42,7 @@ TEST(CallbackTest, EmptyCallbackIsANoOp) {
     SUCCEED();
 }
 
-// FR-5: a callback that returns a value has no unbound state. Its only
-// candidate return would be Ret{}, which for a Result is success -- an unset
-// sink reporting that the data went through. The default constructor is
-// withheld, so the state cannot be written; asserted on the trait, which
-// evaluates without failing this translation unit's build.
+// Non-void callbacks cannot default-construct an empty state (FR-5).
 enum class SinkError : unsigned char { NONE = 0, FULL };
 
 TEST(CallbackTest, AValueReturningCallbackHasNoUnboundState) {
@@ -62,8 +53,8 @@ TEST(CallbackTest, AValueReturningCallbackHasNoUnboundState) {
     SUCCEED();
 }
 
-// The explicit route to the same state is refused too, in the builds that
-// check it: a null function pointer handed to a value-returning Callback.
+// An explicit route to the same state fails too, in the builds that check it: a
+// null function pointer passed to a value-returning Callback.
 TEST(CallbackTest, ANullTargetForAValueReturningCallbackIsRefused) {
 #ifdef NDEBUG
     GTEST_SKIP() << "the refusal is an assert, which NDEBUG removes";
@@ -84,7 +75,7 @@ TEST(CallbackTest, InvokesAFreeFunctionWithItsContext) {
     EXPECT_TRUE(static_cast<bool>(bound));
     EXPECT_EQ(bound(5), 15);
 
-    // The context is borrowed, not copied: a change to it is visible.
+    // The context is borrowed and not copied, so a change to it is visible.
     base = 100;
     EXPECT_EQ(bound(5), 105);
 }
@@ -99,7 +90,7 @@ TEST(CallbackTest, BindReachesTheObject) {
 }
 
 // More than one argument, and a non-void return through the trampoline, with
-// the bound object's own state part of the answer.
+// the bound object's own state part of the result.
 TEST(CallbackTest, CarriesMoreThanOneArgument) {
     Counter counter;
     counter.bump(1);
@@ -109,8 +100,8 @@ TEST(CallbackTest, CarriesMoreThanOneArgument) {
     EXPECT_EQ(counter.calls(), 1);
 }
 
-// FR-5: a function pointer and a context pointer, so it copies across a seam
-// without allocating and without a vtable.
+// A function pointer and a context pointer, so a callback copies across a seam
+// without allocating and without a vtable (FR-5).
 TEST(CallbackTest, IsTriviallyCopyableAndPointerSized) {
     static_assert(std::is_trivially_copyable_v<Callback<void()>>);
     static_assert(std::is_trivially_copyable_v<Callback<int(int, int)>>);
@@ -118,9 +109,7 @@ TEST(CallbackTest, IsTriviallyCopyableAndPointerSized) {
     SUCCEED();
 }
 
-// FR-10: bind() takes a non-const member function. A const one has a different
-// pointer type and does not bind -- asserted as a requires-expression, which
-// evaluates the refusal without failing this translation unit's build.
+// A requires-expression checks that a const member cannot bind (FR-10).
 class Reader {
    public:
     int read(int value) {
