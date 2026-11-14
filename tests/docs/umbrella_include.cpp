@@ -1,3 +1,3 @@
 // SPDX-License-Identifier: MIT
-// The usage guide's one include, alone in a translation unit.
+// The one include of the usage guide, alone in a translation unit.
 #include "umbrella_include.inc"

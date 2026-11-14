@@ -5,36 +5,32 @@ pico_family_bootstrap(PICO_UTIL)
 
 project(pico_util VERSION 0.1.0 LANGUAGES C CXX ASM)
 
-# No firmware-conditional code and no SDK dependency: the same headers serve
-# host and firmware builds. The SDK is initialised only so that the cross tree
-# is the family's one build-firmware/ tree; nothing the library ships links an
-# SDK library. The firmware examples and device tests use the SDK separately.
+# The SDK is initialised to share the family's firmware tree. Shipped targets
+# link no SDK library. Firmware examples and device tests use it separately.
 house_cxx_common_settings(${PICO_UTIL_BUILD_FIRMWARE})
 pico_family_init_sdk(${PICO_UTIL_BUILD_FIRMWARE})
 
-# Device images compile SDK sources; keep -Werror on owned sources only there.
-# FREESTANDING follows CMAKE_CROSSCOMPILING, which is the helper's default.
+# Device images compile SDK sources, so -Werror applies only to owned sources.
+# FREESTANDING follows the helper's CMAKE_CROSSCOMPILING default.
 house_cxx_add_strict_target(pico_util_strict
     VENDOR_SOURCES ${PICO_UTIL_BUILD_FIRMWARE})
 
-# Declares PICO_UTIL_SANITIZE. Before the targets, and build-wide rather than
-# target-scoped, so fetched GoogleTest is instrumented too -- ASan's
+# Sanitisers apply before all targets, including GoogleTest: ASan's
 # container-overflow detector needs both sides of a std::string boundary.
 house_cxx_enable_sanitizers(PICO_UTIL)
 
-# Every knob this build has, declared before anything is added: a subdirectory
-# reading an option that has not been declared yet reads an empty string.
+# Options are declared before subdirectories read them. An undeclared option
+# would read as an empty string.
 house_cxx_declare_tests_option(PICO_UTIL)
 
-# AR-2's cross-compiled probe. Nothing runs it; it exists so the linker has to
-# resolve everything the umbrella header reaches, on a freestanding target.
-# GoogleTest is not involved, so this is independent of PICO_UTIL_ENABLE_TESTS
-# -- which is off when cross-compiling, which is the only time this is on.
+# The probe forces the linker to resolve the umbrella on a freestanding
+# target (AR-2). Nothing runs it.
+# It is independent of GoogleTest and PICO_UTIL_ENABLE_TESTS, which is off in
+# cross builds.
 pico_family_declare_probe_option(PICO_UTIL)
 
-# Install/export only when this is the top-level project: as a subproject the
-# parent owns the export set. A parent that does export this sets the cache
-# variable ON before adding it, which option() then honours.
+# Installation defaults on only when this is the top-level project. A parent
+# owns subproject exports and can enable this option before adding the project.
 house_cxx_declare_install_option(PICO_UTIL)
 
 add_subdirectory(src)
@@ -53,10 +49,9 @@ if(PROJECT_IS_TOP_LEVEL AND PICO_UTIL_BUILD_FIRMWARE)
 endif()
 
 if(PICO_UTIL_ENABLE_INSTALL)
-    # pico_util_strict is exported because install(EXPORT) will not export a
-    # target whose link interface names one outside the set. A consumer never
-    # links pico_util::strict -- it carries this repo's warning flags, not part
-    # of the shipped surface.
+    # install(EXPORT) needs every target named in an exported link interface,
+    # including pico_util_strict. Consumers never link it directly, and its
+    # warning flags are not part of the shipped interface.
     house_cxx_install_package(
         PACKAGE pico_util VERSION ${PROJECT_VERSION}
         NAMESPACE pico_util

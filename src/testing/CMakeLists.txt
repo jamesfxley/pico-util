@@ -1,12 +1,6 @@
-# The allocation-counting harness (MR-5..MR-7, MR-9), exported with the package.
-#
-# Its consumers are this repository's own suite and the test trees of the
-# sibling repositories, which is why it ships rather than staying under tests/.
-#
-# Deliberately NOT linked by pico_util::core and NOT reached by the umbrella:
-# allocation_operators.ipp defines the replaceable allocation functions, which
-# cannot be inline, so it belongs to exactly one translation unit per test
-# executable and must never arrive through an umbrella include.
+# The shipped harness serves sibling test trees (MR-5..MR-7, MR-9).
+# The operator definitions in allocation_operators.ipp must not arrive through
+# an umbrella include.
 add_library(pico_util_testing INTERFACE)
 add_library(pico_util::testing ALIAS pico_util_testing)
 

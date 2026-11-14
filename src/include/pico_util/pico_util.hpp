@@ -17,20 +17,12 @@
 // IWYU pragma: end_exports
 
 /// \file pico_util.hpp
-/// The pico-util umbrella header: the shared, dependency-free utilities the
-/// pico-* family builds on.
-///
-/// AR-1: header-only, depending on nothing beyond the C++ standard library and
-/// the platform libc. The include set is the requirement — no Pico SDK, no
-/// RTOS, no network stack — so the same headers serve host tests and firmware
-/// images (AR-2).
+/// Header-only shared utilities for host tests and firmware (AR-1, AR-2).
 
 namespace pico_util {
 
 /// \name Library version
-/// Mirrors `project(pico_util VERSION ...)`. A host test compares these against
-/// the version the build system holds, so a header that drifts from the package
-/// version fails the suite rather than misreporting itself to a consumer.
+/// These mirror project(pico_util VERSION ...). A host test catches drift.
 /// \{
 
 /// Major version component.

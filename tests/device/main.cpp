@@ -23,29 +23,33 @@ constexpr std::int64_t STORE_TIMER_INTERVAL_US = 10;
 constexpr std::int64_t SPSC_TIMER_INTERVAL_US = 10;
 constexpr std::uint32_t PHASE_SEED = 0x243F6A88;
 
-// Instruction-weighted statistical coverage model for GCC 14.2.1, Release,
-// pico2_w, clean image. Re-derive for another compiler/profile/board. g
-// excludes the marker stores and counts instructions before operation entry and
-// after its exit; s counts the shortest successful operation path, with loop
-// iterations expanded. ROM memcpy/memset bodies are omitted, so s is a lower
-// bound and q=g/(g+s) an upper bound in this model. N is the first integer with
-// q^N < 1e-9. This calculation assumes dispersed, independent
-// instruction-weighted landings; fixed-seed phase variation does not prove
-// independence or cycle uniformity. CR-2: set 0x10000c56, call 0x10000c5c,
-// clear 0x10000c62; g=3 (add, bl, mov). load 0x100001e0..0x1000026c: 51
-// instructions plus 63 extra iterations of 0x10000224..0x1000022e (4 each),
-// s>=303. q<=3/306=0.009803922; q^4=9.238454e-9, q^5=9.057308e-11: N=5.
+// Coverage model for all three cases: instruction-weighted and statistical, for
+// GCC 14.2.1, Release, pico2_w, clean image. Re-derive it for another
+// compiler, profile or board. g excludes the marker stores and counts the
+// instructions before operation entry and after its exit. s counts the shortest
+// successful operation path, with loop iterations expanded. ROM memcpy and
+// memset bodies are omitted, so s is a lower bound and q = g/(g+s) is an upper
+// bound in this model. N is the first integer with q^N < 1e-9. The calculation
+// assumes dispersed, independent instruction-weighted landings, and fixed-seed
+// phase variation does not prove independence or cycle uniformity.
+// For the seqlock case, set is at 0x10000c56, call at 0x10000c5c and clear at
+// 0x10000c62, so g=3 (add, bl, mov). load spans 0x100001e0..0x1000026c, which
+// is 51 instructions plus 63 extra iterations of 0x10000224..0x1000022e (4
+// each), so s>=303. Then q<=3/306=0.009803922, q^4=9.238454e-9 and
+// q^5=9.057308e-11, so N=5 (CR-2).
 constexpr std::uint32_t SEQLOCK_MIN_LANDINGS = 5;
-// CR-3: set 0x100010cc, call 0x100010d0, clear 0x100010d6;
-// g=2 (bl at 0x100010d0, mov at 0x100010d4). store 0x10000408..0x10000476: 39
-// instructions plus 63 extra iterations of 0x1000044e..0x10000458 (4 each),
-// s>=291. q<=2/293=0.006825939; q^4=2.170948e-9, q^5=1.481876e-11: N=5.
+// For the slot-ring case, set is at 0x100010cc, call at 0x100010d0 and clear at
+// 0x100010d6, so g=2 (bl at 0x100010d0, mov at 0x100010d4). store spans
+// 0x10000408..0x10000476, which is 39 instructions plus 63 extra iterations of
+// 0x1000044e..0x10000458 (4 each), so s>=291. Then q<=2/293=0.006825939,
+// q^4=2.170948e-9 and q^5=1.481876e-11, so N=5 (CR-3).
 constexpr std::uint32_t SLOT_RING_MIN_LANDINGS = 5;
-// CR-9: set 0x10000e98, operation 0x10000e9c..0x10000efe,
-// clear 0x10000f04; g=1 (mov at 0x10000f02). s>=473: 5 setup + 32*14
-// instructions at 0x10000eaa..0x10000ed2 + 15 post-loop + 5 in counter.load at
-// 0x10000a8c..0x10000a98; omit inactive predicated instructions.
-// q<=1/474=0.002109705; q^3=9.389987e-9, q^4=1.981010e-11: N=4.
+// For the SPSC case, set is at 0x10000e98, the operation spans
+// 0x10000e9c..0x10000efe and clear is at 0x10000f04, so g=1 (mov at
+// 0x10000f02). s>=473, which is 5 setup instructions, 32*14 instructions at
+// 0x10000eaa..0x10000ed2, 15 post-loop instructions and 5 in counter.load at
+// 0x10000a8c..0x10000a98, omitting inactive predicated instructions. Then
+// q<=1/474=0.002109705, q^3=9.389987e-9 and q^4=1.981010e-11, so N=4 (CR-9).
 constexpr std::uint32_t SPSC_MIN_LANDINGS = 4;
 
 void vary_phase(std::uint32_t& phase, std::uint32_t pause_mask) {
@@ -73,17 +77,19 @@ void fill_payload(Payload& value, std::uint32_t sequence) {
     return true;
 }
 
-// pico/time.h documents repeating timer callbacks in the default alarm pool's
-// IRQ on this core, with user_data retained until cancellation. pico/platform.h
-// supplies __get_current_exception(): reject any inline mainline callback.
-// All coordination uses acquire/release to keep it separate from the protocol
-// under test. Each case runs once; its static context and stack-owned timer
-// outlive cancellation. Large publication and ring storage stays off the stack.
+// pico/time.h documents that repeating timer callbacks run in the IRQ of the
+// default alarm pool on this core, with user_data retained until cancellation.
+// pico/platform.h supplies __get_current_exception(), which the cases use to
+// reject any callback that runs inline in mainline. All coordination uses
+// acquire and release so that it stays separate from the protocol under test.
+// Each case runs once, and its static context and stack-owned timer outlive
+// cancellation. Large publication and ring storage stays off the stack.
 struct Coverage {
     // Sequential consistency brackets the tested operation on both sides.
     std::atomic<bool> in_progress{false};
-    // Only this case's IRQ writes the count, so load/store needs no RMW or
-    // atomic runtime lock on ARMv6-M. Release/acquire publishes the count.
+    // Only this case's IRQ writes the count, so a plain load and store suffice
+    // and no read-modify-write or atomic runtime lock is needed on ARMv6-M.
+    // Release and acquire publish the count.
     std::atomic<std::uint32_t> landings{0};
 
     void record_interrupt() {
@@ -132,7 +138,8 @@ bool seqlock_irq(repeating_timer_t* timer) {
     return sequence < TRANSFERS;
 }
 
-// CR-2: IRQ writes, mainline repeatedly reads multi-word complementary fields.
+// The IRQ writes and mainline repeatedly reads multi-word complementary fields
+// (CR-2).
 [[nodiscard]] CaseResult seqlock_case() {
     static SeqlockState state;
     fill_payload(state.next, 0);
@@ -192,11 +199,12 @@ bool slot_ring_irq(repeating_timer_t* timer) {
     return true;
 }
 
-// CR-3, CR-4: mainline is the only writer. During an IRQ read it is suspended,
-// so zero stores complete during that read, satisfying the writer contract.
-// pico/time.h:801-816 documents IRQ callbacks and positive delays between
-// callback completion and the next start. Consecutive stores with a short delay
-// offer store brackets; their IRQ landing threshold is statistical coverage.
+// Mainline is the only writer. While an IRQ read runs, mainline is suspended,
+// so zero stores complete during that read and the writer contract is met
+// (CR-3, CR-4). pico/time.h:801-816 documents IRQ callbacks and positive delays
+// between callback completion and the next start. Consecutive stores with a
+// short delay offer store brackets, and their IRQ landing threshold is
+// statistical coverage.
 [[nodiscard]] CaseResult slot_ring_case() {
     static SlotRingState state;
     fill_payload(state.next, 0);
@@ -248,7 +256,8 @@ bool spsc_irq(repeating_timer_t* timer) {
         state.irq_only.store(false, std::memory_order_release);
     }
     auto queued = state.queued.load(std::memory_order_acquire);
-    // One attempt per IRQ: refusals retain the sequence number for retry.
+    // One attempt per IRQ. A failed push keeps the sequence number for the
+    // retry.
     fill_payload(state.next, queued + 1);
     if (state.ring.push(state.next)) {
         ++queued;
@@ -257,7 +266,8 @@ bool spsc_irq(repeating_timer_t* timer) {
     return queued < TRANSFERS;
 }
 
-// CR-9: IRQ producer, mainline consumer; 4096 payloads wrap seven slots.
+// The IRQ produces and mainline consumes. 4096 payloads wrap seven slots
+// (CR-9).
 [[nodiscard]] CaseResult spsc_case() {
     static SpscState state;
     repeating_timer_t timer{};

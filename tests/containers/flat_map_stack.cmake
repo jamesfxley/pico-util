@@ -1,7 +1,5 @@
-# BR-16: every function in the stack probe uses a frame far below the 4 KiB
-# value it handles. A reset through a temporary puts a whole value on the
-# stack, and a clear() through one puts the whole table there.
-#
+# Frames stay below the 4 KiB value. Resetting through a temporary would put
+# that value on the stack (BR-16).
 #   cmake -DSU_DIR=<object dir> -DLIMIT=<bytes> -P flat_map_stack.cmake
 file(GLOB_RECURSE USAGE "${SU_DIR}/*.su")
 if(NOT USAGE)

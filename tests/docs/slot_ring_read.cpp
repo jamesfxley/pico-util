@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// A mainline read of a slot-ring value an interrupt handler writes.
+// The bounded slot-ring read from the usage guide.
 #include <cstdint>
 #include <pico_util/pico_util.hpp>
 #include <pico_util/publish/published.hpp>

@@ -1,11 +1,8 @@
 // SPDX-License-Identifier: MIT
-// Published<T, Strategy> after its store counter wraps (CR-2, CR-3, CR-8).
-//
-// A counter that has wrapped back to zero is not "never stored". The seqlock
-// counter advances two per store and wraps after 2^31; the slot-ring counter
-// advances one per store and wraps after 2^32. Reaching either takes that many
-// real stores, so this case is its own binary, built at -O2 in every build
-// type: the state it checks is the same at any optimisation level.
+// A counter back at zero does not mean nothing was stored (CR-2, CR-3, CR-8).
+// The seqlock wraps after 2^31 stores and the ring after 2^32. Compiling this
+// separate executable at -O2 keeps it practical without changing the state
+// tested.
 #include <gtest/gtest.h>
 
 #include <cstdint>

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// The three ways to meet a capacity refusal, over the names the guide uses.
+// The three ways to handle a full container, over the names the guide uses.
 #include <pico_util/containers/ring_buffer.hpp>
 #include <pico_util/pico_util.hpp>
 #include <string_view>

@@ -1,15 +1,7 @@
 // SPDX-License-Identifier: MIT
-// The allocation harness (MR-5..MR-7, MR-9) and the containers' no-allocation
-// claim (BR-6).
-//
-// This is the only test that replaces the global allocation functions, and it
-// is its own executable for that reason: the replacement is program-wide, so
-// hosting it alongside tests that allocate freely would make every one of them
-// depend on the counter's armed state.
-//
-// The counter is armed only around the statements under test. GoogleTest itself
-// allocates while reporting, so a counter armed for the whole run would measure
-// the framework.
+// Allocation harness tests (MR-5..MR-7, MR-9) and utility checks (BR-6).
+// Replaced operators affect every test in this executable, so it is separate.
+// Guards surround the statements under test to exclude framework reporting.
 #include <gtest/gtest.h>
 
 #include <array>
@@ -43,10 +35,8 @@ namespace {
 
 enum class TestError : std::uint8_t { NONE = 0, FAILED };
 
-// MR-5, gate integrity. Every zero below is worthless unless the counter can be
-// shown to move at all -- a harness whose operators were never linked would
-// report zero for everything and read as a pass.
-// MR-6, CXX-08.1: worker allocations share one armed counting scope.
+// A moving counter rules out vacuous zero-allocation passes (MR-5).
+// Worker allocations share one armed scope (MR-6).
 TEST(AllocationTest, ConcurrentAllocationsHaveAnExactTotal) {
     constexpr std::size_t ITERATIONS = 10000;
     std::atomic<bool> start{false};
@@ -76,14 +66,9 @@ TEST(AllocationTest, TheCounterObservesAnAllocation) {
                                                "linked into this executable";
 }
 
-// MR-5: the array and over-aligned forms specifically. These are the ones a
-// partial replacement leaves with the implementation's own allocator.
-//
-// The array form, called by name. std::vector goes through std::allocator,
-// which calls the *scalar* operator new, so a vector exercises no array form at
-// all; and a new-expression of an array type needs a C array in the source.
-// Calling operator new[] directly reaches exactly the replaced function, and
-// the deleter hands the block back to its matching operator delete[].
+// Array and over-aligned forms are exercised separately (MR-5).
+// vector uses scalar new, so a named new[] call reaches the array replacement.
+// The matching delete[] releases it.
 struct ArrayDelete {
     void operator()(void* block) const noexcept { ::operator delete[](block); }
 };
@@ -112,9 +97,9 @@ TEST(AllocationTest, ArrayAndOverAlignedFormsAreCounted) {
     }
 }
 
-// MR-6: counting is scoped to the guard, and each guard starts from zero.
+// Counting is scoped to the guard, and each guard starts from zero (MR-6).
 TEST(AllocationTest, CountingIsScopedToTheGuard) {
-    // Outside any guard: not counted.
+    // Outside any guard, allocations are not counted.
     const std::string before(256, 'a');
     {
         const AllocationGuard guard;
@@ -123,12 +108,12 @@ TEST(AllocationTest, CountingIsScopedToTheGuard) {
         EXPECT_EQ(inside.size(), 256U);
         EXPECT_GT(AllocationGuard::count(), 0U);
     }
-    // Outside any guard again: the tally the guard left does not move.
+    // Outside any guard again, the tally that the guard left does not move.
     const std::size_t tally = AllocationGuard::count();
     const std::string after(256, 'c');
     EXPECT_EQ(AllocationGuard::count(), tally)
         << "an allocation outside a guard was counted";
-    // A second guard re-zeroes rather than accumulating.
+    // A second guard zeroes the count and does not accumulate.
     {
         const AllocationGuard guard;
         EXPECT_EQ(AllocationGuard::count(), 0U);
@@ -137,18 +122,9 @@ TEST(AllocationTest, CountingIsScopedToTheGuard) {
     EXPECT_FALSE(after.empty());
 }
 
-// MR-7: the replacement is complete, so every allocation and every free goes
-// through the same allocator. A block from one allocator reaching the other's
-// deallocation function is what a partial replacement produces, and what the
-// sanitizer leg reports as alloc-dealloc-mismatch -- so this test's real
-// verdict is delivered by running it under ASan, not by its assertions.
-//
-// All eight allocation forms and all twelve deallocation forms, each called by
-// name. A form left unreplaced reaches the implementation's own definition. On
-// the sanitizer leg that is the sanitizer's allocator, and the count stays put
-// or alloc-dealloc-mismatch is reported. Elsewhere the standard's default
-// nothrow and array forms forward to the replaced scalar ones, so nothing here
-// fails; pico_util_testing_every_form_replaced catches that case by symbol.
+// ASan detects mismatched allocators across all twenty named forms (MR-7).
+// Without ASan, default array/nothrow forwarding can hide missing replacements.
+// pico_util_testing_every_form_replaced checks those by symbol.
 template <typename Allocate, typename Release>
 void round_trip(const char* form, Allocate allocate, Release release) {
     void* block = nullptr;
@@ -211,19 +187,16 @@ TEST(AllocationTest, EveryFormRoundTripsThroughOneAllocator) {
         [](void* block) { ::operator delete[](block, ALIGN, std::nothrow); });
 }
 
-// MR-5, CXX-07.2: an over-aligned request no allocator can satisfy is refused.
-// Rounding a size near SIZE_MAX up to the alignment wraps to a small one, and
-// a tiny block would then be returned for it.
+// A near-SIZE_MAX request returns null without rounding to a tiny block (MR-5).
 TEST(AllocationTest, AnUnsatisfiableAlignedRequestIsRefused) {
     constexpr auto ALIGN = std::align_val_t{64};
     constexpr auto BYTES = static_cast<std::size_t>(ALIGN);
     constexpr std::size_t MAX = std::numeric_limits<std::size_t>::max();
-    // The first size whose rounding would wrap, and the largest. The size just
-    // below them does not wrap, so only the allocator can refuse it, and how it
-    // does is the allocator's: a sanitizer's aborts instead of returning null.
+    // Only sizes whose rounding wraps are tried: a non-wrapping size would
+    // reach the allocator, which can abort under a sanitiser.
     for (const std::size_t size : {MAX - BYTES + 2U, MAX}) {
-        // Read through a volatile, so the compiler's own size check does not
-        // refuse the call before the allocator is asked.
+        // Read through a volatile, so that the compiler's own size check does
+        // not reject the call before the allocator is asked.
         const volatile std::size_t requested = size;
         const std::size_t unsatisfiable = requested;
         void* const block = ::operator new(unsatisfiable, ALIGN, std::nothrow);
@@ -232,12 +205,8 @@ TEST(AllocationTest, AnUnsatisfiableAlignedRequestIsRefused) {
     }
 }
 
-// MR-9: the count stays readable after the guard's scope closes, until the next
-// guard arms. That is what lets a test assert on a tally after the code under
-// test has returned, and a destructor that zeroed the count would make every
-// such assertion vacuously green. Read here, in the translation unit that
-// replaces the allocation functions, because anywhere else the count is always
-// zero and the assertion could not fail.
+// The tally remains after scope exit until another guard arms (MR-9).
+// These checks need replaced operators to produce a nonzero count.
 TEST(AllocationTest, TheCountOutlivesTheGuard) {
     {
         const AllocationGuard guard;
@@ -247,8 +216,7 @@ TEST(AllocationTest, TheCountOutlivesTheGuard) {
     EXPECT_GT(AllocationGuard::count(), 0U);
 }
 
-// BR-6: nothing this library ships allocates. This is what makes the harness a
-// gate rather than a facility.
+// Representative utility operations allocate nothing (BR-6).
 TEST(AllocationTest, NothingInThisLibraryAllocates) {
     const AllocationGuard guard;
 
@@ -280,7 +248,7 @@ TEST(AllocationTest, NothingInThisLibraryAllocates) {
         EXPECT_TRUE(ring.push(value));
         ring.pop();
     }
-    // The acquire/commit pair, which push() does not go through.
+    // The acquire and commit pair, which push() does not go through.
     std::uint32_t* slot = ring.acquire();
     ASSERT_NE(slot, nullptr);
     *slot = 7;

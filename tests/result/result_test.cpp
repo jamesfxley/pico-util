@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT
-// Result<T, E> (FR-1..FR-4, FR-7, FR-9, FR-11). The parameterisation is the
-// point: the container is generic and the taxonomy stays in the library that
-// owns the failures, so these tests instantiate two unrelated error types in
-// one translation unit.
+// Result<T, E> (FR-1..FR-4, FR-7, FR-9, FR-11). The container is generic and
+// the error taxonomy stays in the library that owns the failures, so these
+// tests instantiate two unrelated error types in one translation unit.
 #include "pico_util/result/result.hpp"
 
 #include <gtest/gtest.h>
@@ -14,14 +13,11 @@ using pico_util::Result;
 
 namespace {
 
-// Two unrelated taxonomies, as two consuming libraries would define them. Both
-// have a zero enumerator meaning success, which is the convention ok() rests
-// on.
+// Both error enums use zero for success, as ok() expects.
 enum class BusError : std::uint8_t { NONE = 0, TIMEOUT, NACK };
 enum class ParseError : std::uint8_t { NONE = 0, TRUNCATED, BAD_MAGIC };
 
-// FR-2: neither return site names Result. That is what the implicit
-// constructors buy, and what a change making them explicit would break.
+// Implicit constructors allow unnamed Result returns (FR-2).
 constexpr Result<int, BusError> read_register(bool succeed) {
     if (!succeed) {
         return BusError::TIMEOUT;
@@ -49,8 +45,8 @@ TEST(ResultTest, HoldsAValueOrAnErrorNeverBoth) {
     EXPECT_EQ(bad.error(), BusError::NACK);
 }
 
-// FR-1, FR-8: the container costs the value plus a flat error code, and stays
-// trivially copyable so it crosses a seam without allocation.
+// The container costs the value plus a flat error code and stays trivially
+// copyable, so it crosses a seam without allocation (FR-1, FR-8).
 TEST(ResultTest, IsTriviallyCopyableAndCheap) {
     static_assert(std::is_trivially_copyable_v<Result<int, BusError>>);
     static_assert(std::is_trivially_copyable_v<Result<void, BusError>>);
@@ -59,8 +55,7 @@ TEST(ResultTest, IsTriviallyCopyableAndCheap) {
     SUCCEED();
 }
 
-// FR-1: the error type really is a parameter, not a fixed vocabulary. Two
-// unrelated taxonomies instantiate side by side in one translation unit.
+// Two unrelated error taxonomies coexist in one translation unit (FR-1).
 TEST(ResultTest, ParameterisedOnTheErrorType) {
     const Result<int, BusError> bus = BusError::TIMEOUT;
     const Result<int, ParseError> parse = ParseError::TRUNCATED;
@@ -80,8 +75,7 @@ TEST(ResultTest, ReturnsAValueOrAnErrorWithoutNamingResult) {
     EXPECT_EQ(bad.error(), BusError::TIMEOUT);
 }
 
-// FR-3: a Result carrying no value defaults to success, so `return {};` is the
-// success path and needs no enumerator spelled out.
+// A valueless Result defaults to success (FR-3).
 TEST(ResultTest, VoidResultDefaultsToSuccess) {
     const Result<void, ParseError> fresh;
     EXPECT_TRUE(fresh.ok());
@@ -92,8 +86,8 @@ TEST(ResultTest, VoidResultDefaultsToSuccess) {
     EXPECT_EQ(validate(false).error(), ParseError::BAD_MAGIC);
 }
 
-// FR-4: the fallback is the caller's, not a default-constructed value that
-// means nothing.
+// The fallback is the caller's and not a meaningless default-constructed value
+// (FR-4).
 TEST(ResultTest, ValueOrReturnsTheFallbackOnAnError) {
     const Result<int, BusError> bad = BusError::TIMEOUT;
     EXPECT_EQ(bad.value_or(-1), -1);
@@ -101,14 +95,13 @@ TEST(ResultTest, ValueOrReturnsTheFallbackOnAnError) {
     const Result<int, BusError> good = 5;
     EXPECT_EQ(good.value_or(-1), 5);
 
-    // A default-constructed int is 0, which is a plausible reading -- so the
-    // fallback has to be distinguishable from it for this test to mean
-    // anything.
+    // A default-constructed int is 0, which is a plausible reading, so the
+    // fallback has to differ from it for this test to mean anything.
     EXPECT_NE(bad.value_or(-1), 0);
 }
 
-// FR-1..FR-4 at compile time: the whole type works in a constant expression, so
-// a table of results can be built without running anything.
+// The whole type works in a constant expression, so a table of results can be
+// built without running anything (FR-1..FR-4).
 TEST(ResultTest, WorksInAConstantExpression) {
     static_assert(read_register(true).ok());
     static_assert(read_register(true).value() == 7);
@@ -120,14 +113,11 @@ TEST(ResultTest, WorksInAConstantExpression) {
     SUCCEED();
 }
 
-// FR-1: an integral error type is admitted alongside an enum, because a
-// consumer wrapping errno or a vendor status code has no enum to offer.
+// An integral E can carry errno or vendor status codes (FR-1).
 TEST(ResultTest, AcceptsAnIntegralErrorType) {
-    // A plain int error, with a T that does not convert to or from it. An
-    // arithmetic T here -- Result<std::uint8_t, int> -- is refused by
-    // result.hpp's static_assert rather than silently resolving `= 3` to the
-    // error constructor; the FR-1 note at the end of this file names that
-    // refusal's test.
+    // T does not convert to or from int. Otherwise an argument could
+    // silently select the error constructor. Compile-failure probes cover that
+    // (FR-1).
     struct Reading {
         int raw;
     };
@@ -141,15 +131,14 @@ TEST(ResultTest, AcceptsAnIntegralErrorType) {
     EXPECT_EQ(succeeded.value().raw, 7);
 }
 
-// Whether Result<int, E> can be named: a concept, because a requirement on a
-// type no template parameter reaches is a hard error rather than false.
+// Whether Result<int, E> can be named. This is a concept because a requirement
+// on a type that no template parameter reaches is a hard error and not false.
 template <typename E>
 concept NamesAResult = requires { typename pico_util::Result<int, E>; };
 
-// FR-7: ErrorCode admits an enumeration and an integer and nothing else. The
-// refusal is a concept, so it is observable without instantiating anything --
-// unlike FR-1's convertible-pair refusal below, which is a static_assert
-// inside the class and can only be seen by failing a build.
+// Enums and integers satisfy ErrorCode (FR-7). Constraints are testable here.
+// Convertible pairs fail by static_assert and need a compile-failure probe
+// (FR-1).
 TEST(ResultTest, ErrorCodeRefusesAStruct) {
     struct NotAnErrorCode {
         int code;
@@ -159,14 +148,13 @@ TEST(ResultTest, ErrorCodeRefusesAStruct) {
     static_assert(pico_util::ErrorCode<int>);
     static_assert(!pico_util::ErrorCode<NotAnErrorCode>);
     static_assert(!pico_util::ErrorCode<float>);
-    // And Result itself carries the constraint, so naming one is refused.
+    // Result itself carries the constraint, so naming one fails to compile.
     static_assert(!NamesAResult<NotAnErrorCode>);
     SUCCEED();
 }
 
-// FR-9: reading value() from an errored Result is a caller bug, asserted in a
-// build with assertions enabled. A Release build removes the check, which FR-9
-// says, so this is proven on the Debug leg and skips on the other.
+// An errored value read asserts only without NDEBUG (FR-9).
+// Release skips this test because it removes that assertion (FR-9).
 TEST(ResultTest, ReadingTheValueOfAFailureIsRefused) {
 #ifdef NDEBUG
     GTEST_SKIP() << "the refusal is an assert, which NDEBUG removes";
@@ -176,16 +164,14 @@ TEST(ResultTest, ReadingTheValueOfAFailureIsRefused) {
 #endif
 }
 
-// FR-11: a failure constructed from E{} is refused, because E{} is the success
-// state and the result would be an ok() Result holding a value nobody
-// computed. Result<void, E> is exempt and accepts it: there E{} is correct
-// propagation of a success.
+// An E{} failure would fabricate success with no computed value (FR-11).
+// Result<void, E> accepts E{} to propagate success.
 TEST(ResultTest, AFailureFromTheSuccessCodeIsRefused) {
 #ifdef NDEBUG
     GTEST_SKIP() << "the refusal is an assert, which NDEBUG removes";
 #else
-    // An alias, because the comma in the template argument list would split
-    // the macro's arguments.
+    // The alias is needed because the comma in the template argument list would
+    // split the macro's arguments.
     using IntResult = Result<int, BusError>;
     EXPECT_DEATH(
         {
@@ -198,13 +184,8 @@ TEST(ResultTest, AFailureFromTheSuccessCodeIsRefused) {
     EXPECT_TRUE(propagated.ok());
 }
 
-// FR-1: T and E cannot be the same type, nor convertible to each other -- in
-// the first case the value and error constructors have the same signature, and
-// in the second they compete for the same argument and overload resolution
-// picks by conversion rank rather than by intent. result.hpp refuses both with
-// a static_assert naming the fix. Naming Result<E, E> or
-// Result<std::uint8_t, int> here would fail this translation unit's build, so
-// the refusals are the build-failure tests pico_util_refuses_result_same_type
-// and pico_util_refuses_result_convertible_types.
+// Identical or convertible T/E fail to compile in
+// pico_util_refuses_result_same_type and
+// pico_util_refuses_result_convertible_types (FR-1).
 
 }  // namespace
