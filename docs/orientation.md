@@ -40,12 +40,14 @@ applies. The footprint budgets are declared only in `pico.toml`.
 The `firmware` tree is built only where `PICO_SDK_PATH` names an SDK, as the
 family image does. `HOUSE_MATRIX_BOARD`, else `PICO_BOARD`, selects `pico2_w`
 (the default) or `pico_w`. The `sanitize` tree builds the host tree as a Debug
-build with AddressSanitizer and UBSan (`PICO_UTIL_SANITIZE`) and runs its
-tests with `ASAN_OPTIONS=detect_leaks=1`; it is built only when
-`HOUSE_MATRIX_SANITIZE=ON`, which the CI sanitiser leg sets:
+build with the sanitiser `HOUSE_MATRIX_SANITIZE` names (`PICO_UTIL_SANITIZE`):
+`address` for AddressSanitizer and UBSan, `thread` for ThreadSanitizer and
+UBSan. It is built only when that variable is set, as the CI sanitiser legs
+do for each value:
 
 ```sh
-HOUSE_MATRIX_SANITIZE=ON python3 dev.py check --group build
+HOUSE_MATRIX_SANITIZE=address python3 dev.py check --group build
+HOUSE_MATRIX_SANITIZE=thread python3 dev.py check --group build
 ```
 
 The cross build uses the family's single `build-firmware/` tree. The SDK is
