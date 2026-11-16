@@ -62,8 +62,9 @@ table in the specification states it.
 Before `arm()`, `growth_bytes()` returns 0, and `armed()` lets a consumer tell
 that zero from a measured one. `measuring()` does the same for a build whose
 every reading is 0, either because there is no `mallinfo` or because
-AddressSanitizer's allocator is in use. The build decides its value and a
-reading does not, because a working heap with nothing on it also reads 0.
+AddressSanitizer or ThreadSanitizer allocates outside the arena `mallinfo`
+reads. The build decides its value and a reading does not, because a working
+heap with nothing on it also reads 0.
 
 ## Two byte-order families
 
@@ -239,10 +240,19 @@ prove the arithmetic right.
 Reporting exhaustion through `Result` is the one place where a module here
 depends on another: `publish` links `result`.
 
-The re-read of the counter takes an acquire fence and not an acquire load. An
-acquire load stops later accesses from moving earlier. The validation needs the
-opposite: the word loads must not move after the counter re-read. With the wrong
-ordering the validation can pass over a torn read.
+Both strategies order their words without standalone fences. The writer
+stores each word with release and the reader loads each word with acquire. A
+reader that loads a word from a later store therefore sees a counter write made
+before that store when it re-reads the counter, and rejects the read. An
+acquire load of the counter alone would not do this: it stops later accesses
+moving earlier, but the validation needs the word loads not to move after the
+counter re-read. ThreadSanitizer does not model standalone fences, and GCC warns
+about them under `-fsanitize=thread` (`-Wtsan`), which fails this build.
+
+The cost falls on ARMv6-M (RP2040), where each word access carries its own
+`dmb`: a store or a read attempt executes N + 2 barriers for an N-word value,
+where fences needed 3. ARMv8-M (RP2350) uses its load-acquire and
+store-release instructions and executes no `dmb`.
 
 Both strategies carry the payload as 32-bit atomic words and `memcpy` through a
 properly aligned local. This keeps a 64-bit payload off `__atomic_load_8`, which

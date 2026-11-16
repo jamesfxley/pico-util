@@ -24,7 +24,10 @@ template <typename T>
 inline constexpr std::size_t PUBLISHED_WORD_COUNT =
     (sizeof(T) + sizeof(std::uint32_t) - 1) / sizeof(std::uint32_t);
 
-/// Copy `value` into `words` with relaxed stores. The strategy orders them.
+/// Copy `value` into `words`, each word with a release store. A reader whose
+/// acquire load returns a word from this call then sees every write that
+/// preceded it in the writer, including the counter write that lets the reader
+/// reject the word: the odd sequence count, or the previous store's ring count.
 /// \param words destination, whose length covers `sizeof(T)`.
 /// \param value the value to publish.
 template <typename T, std::size_t N>
@@ -33,18 +36,20 @@ void write_words(std::array<std::atomic<std::uint32_t>, N>& words,
     std::array<std::uint32_t, N> raw{};
     std::memcpy(raw.data(), &value, sizeof(T));
     for (std::size_t i = 0; i < N; ++i) {
-        words[i].store(raw[i], std::memory_order_relaxed);
+        words[i].store(raw[i], std::memory_order_release);
     }
 }
 
-/// Reassemble a `T` with relaxed loads. The caller's protocol validates it.
+/// Reassemble a `T`, each word with an acquire load, so the caller's re-read
+/// of its counter cannot take a value older than the writes that preceded any
+/// word returned. The caller's protocol validates the value.
 /// \param words source, whose length covers `sizeof(T)`.
 template <typename T, std::size_t N>
 [[nodiscard]] T read_words(
     const std::array<std::atomic<std::uint32_t>, N>& words) noexcept {
     std::array<std::uint32_t, N> raw{};
     for (std::size_t i = 0; i < N; ++i) {
-        raw[i] = words[i].load(std::memory_order_relaxed);
+        raw[i] = words[i].load(std::memory_order_acquire);
     }
     T value{};
     // The void* cast silences GCC's -Wclass-memaccess for a trivially copyable
@@ -120,15 +125,13 @@ class Published<T, PublishStrategy::SEQLOCK_WRITER_NOT_PREEMPTIBLE> {
     /// Publish `value` only from the writer, which its reader cannot preempt.
     void store(const T& value) noexcept {
         detail::check_publishable<T>();
-        sequence_.store(sequence_.load(std::memory_order_relaxed) + 1,
-                        std::memory_order_relaxed);
-        // Thread fences also order a reader on another core. Signal fences
-        // order only the compiler and suffice only on the same core.
-        std::atomic_thread_fence(std::memory_order_release);
+        const std::uint32_t start = sequence_.load(std::memory_order_relaxed);
+        // The odd count needs no release of its own: each word's release
+        // store carries it to a reader that sees the word.
+        sequence_.store(start + 1, std::memory_order_relaxed);
         detail::write_words(words_, value);
-        std::atomic_thread_fence(std::memory_order_release);
-        sequence_.store(sequence_.load(std::memory_order_relaxed) + 1,
-                        std::memory_order_relaxed);
+        // A reader that acquires the even count sees every word written.
+        sequence_.store(start + 2, std::memory_order_release);
         published_.store(true, std::memory_order_release);
     }
 
@@ -140,10 +143,10 @@ class Published<T, PublishStrategy::SEQLOCK_WRITER_NOT_PREEMPTIBLE> {
             // snapshot and a later flag read would return zeroed words (CR-8).
             const bool stored = published_.load(std::memory_order_acquire);
             const std::uint32_t before =
-                sequence_.load(std::memory_order_relaxed);
-            std::atomic_thread_fence(std::memory_order_acquire);
+                sequence_.load(std::memory_order_acquire);
             const T value = detail::read_words<T>(words_);
-            std::atomic_thread_fence(std::memory_order_acquire);
+            // A word from a later store makes that store's odd count visible
+            // here, so the count differs from before.
             const std::uint32_t after =
                 sequence_.load(std::memory_order_relaxed);
             if (before == after && (before & 1U) == 0U) {
@@ -191,12 +194,10 @@ class Published<T, PublishStrategy::SLOT_RING_READER_MAY_PREEMPT> {
     void store(const T& value) noexcept {
         detail::check_publishable<T>();
         const std::uint32_t next = count_.load(std::memory_order_relaxed) + 1;
-        // This release pairs with the reader's acquire fence: seeing an
-        // overwritten word then exposes the previous store's count. The later
-        // count release only orders preceding accesses. It gives the reader's
-        // fence no release to acquire through the relaxed words. Without this
-        // fence another core could validate overwritten words.
-        std::atomic_thread_fence(std::memory_order_release);
+        // Each word's release store carries the previous store's count to a
+        // reader that sees the word. The later count release only orders the
+        // accesses before it, so without the per-word release another core
+        // could validate overwritten words.
         detail::write_words(slots_[next % SLOT_COUNT], value);
         count_.store(next, std::memory_order_release);
         published_.store(true, std::memory_order_release);
@@ -215,14 +216,11 @@ class Published<T, PublishStrategy::SLOT_RING_READER_MAY_PREEMPT> {
             const std::uint32_t before = count_.load(std::memory_order_acquire);
             const T value = detail::read_words<T>(slots_[before % SLOT_COUNT]);
 
-            // The words must be read before the counter re-read. An acquire
-            // load only stops later accesses moving earlier. This fence stops
-            // the earlier word loads moving later.
-            std::atomic_thread_fence(std::memory_order_acquire);
-
-            // The fence supplies ordering for this relaxed load. The writer
-            // reaches this slot after SLOT_COUNT - 1 stores, so equality is too
-            // strict.
+            // The word loads acquire, so a word from the store that reuses
+            // this slot makes the count of the store before it visible here,
+            // and after - before is then at least SLOT_COUNT - 1. The writer
+            // reaches this slot after SLOT_COUNT - 1 stores, so equality is
+            // too strict.
             const std::uint32_t after = count_.load(std::memory_order_relaxed);
             if (detail::slot_read_validates(before, after, SLOT_COUNT)) {
                 return value;
