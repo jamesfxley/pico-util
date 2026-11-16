@@ -40,14 +40,16 @@
 namespace pico_util {
 
 namespace detail {
-/// Whether this build can read its allocator through mallinfo (MR-2).
+/// Whether this build can read its allocator through mallinfo (MR-2). Under
+/// AddressSanitizer or ThreadSanitizer, allocations bypass the glibc arena that
+/// mallinfo reads, so it reads 0.
 inline constexpr bool HEAP_READABLE =
 #if !(defined(PICO_UTIL_HAVE_MALLINFO2) || defined(PICO_UTIL_HAVE_MALLINFO))
     false;
-#elif defined(__SANITIZE_ADDRESS__)
+#elif defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
     false;
 #elif defined(__has_feature)
-#if __has_feature(address_sanitizer)
+#if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer)
     false;
 #else
     true;

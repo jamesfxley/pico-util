@@ -62,8 +62,9 @@ table in the specification states it.
 Before `arm()`, `growth_bytes()` returns 0, and `armed()` lets a consumer tell
 that zero from a measured one. `measuring()` does the same for a build whose
 every reading is 0, either because there is no `mallinfo` or because
-AddressSanitizer's allocator is in use. The build decides its value and a
-reading does not, because a working heap with nothing on it also reads 0.
+AddressSanitizer or ThreadSanitizer allocates outside the arena `mallinfo`
+reads. The build decides its value and a reading does not, because a working
+heap with nothing on it also reads 0.
 
 ## Two byte-order families
 

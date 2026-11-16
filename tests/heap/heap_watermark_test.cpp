@@ -39,7 +39,8 @@ TEST(HeapWatermarkTest, ReportsNoGrowthBeforeArming) {
     EXPECT_EQ(watermark.growth_bytes(), 0U);
 }
 
-// A live block distinguishes a readable heap from ASan's zero reading (MR-8).
+// A live block distinguishes a readable heap from the zero reading under a
+// sanitiser (MR-8).
 // Checking the reading prevents a broken mallinfo branch from skipping growth.
 TEST(HeapWatermarkTest, MeasuringAgreesWithTheReading) {
     const auto block =
