@@ -225,6 +225,11 @@ Every ID above appears here with the test that establishes it and the criterion
 that test applies. Review checks that code or tests cite each ID defined in this
 document.
 
+The counter-wrap test `tests/publish/published_wrap_test.cpp` (CR-2, CR-3,
+CR-8) runs in the default and AddressSanitizer builds only. It runs on one
+thread, so ThreadSanitizer has nothing to check in it, and under
+ThreadSanitizer it takes minutes.
+
 | ID | Established by | Criterion |
 |---|---|---|
 | AR-1 | `src/include/pico_util/pico_util.hpp` — the include set; the host build and the cross-compiled header probe | The umbrella pulls in no SDK, RTOS or network header. What fails when one appears is the host build, which has none on its include path, and the cross probe, which links no SDK library. |
