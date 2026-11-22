@@ -31,8 +31,9 @@ python3 dev.py lint                  # clang-tidy over the compile db; BLOCKING
 python3 dev.py gate <name>           # one gate, e.g. deviations, footprint, consumer
 ```
 
-Lint reads existing build trees. Run `python3 dev.py build` first; the CI
-lint job does that in `prepare`.
+Lint reads the compile databases of existing trees. Run `python3 dev.py build`
+or `python3 dev.py build --configure-only` first. CI runs one lint job per tree,
+each preparing with `build --configure-only`.
 
 `python3 dev.py check --list` prints every gate with its group and whether it
 applies. The footprint budgets are declared only in `pico.toml`.
