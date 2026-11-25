@@ -48,23 +48,23 @@ measures it. The obvious instrument is unavailable. The Pico SDK already wraps
 link conflict and not an observation.
 
 The allocator's own accounting is available. `uordblks` is the number of bytes
-currently in use. The library reads it through `mallinfo2()` where the C library
-provides it and through `mallinfo()` otherwise (MR-2). The difference between an
-armed baseline and a later reading is the net growth. `arm()` captures the
-baseline. The caller can call it repeatedly, and each call replaces the previous
-baseline and does not accumulate. `growth_bytes()` reports the difference,
-clamped at zero so that a net shrink reads as no growth and an unsigned type
-does not underflow.
+currently in use. The library reads it through `mallinfo2()` where glibc
+provides it and through `mallinfo()` on older glibc and on newlib (MR-2). The
+difference between an armed baseline and a later reading is the net growth.
+`arm()` captures the baseline. The caller can call it repeatedly, and each call
+replaces the previous baseline and does not accumulate. `growth_bytes()` reports
+the difference, clamped at zero so that a net shrink reads as no growth and an
+unsigned type does not underflow.
 
 The limit of the proxy is part of the requirement, and the note after the MR
 table in the specification states it.
 
 Before `arm()`, `growth_bytes()` returns 0, and `armed()` lets a consumer tell
 that zero from a measured one. `measuring()` does the same for a build whose
-every reading is 0, either because there is no `mallinfo` or because
-AddressSanitizer or ThreadSanitizer allocates outside the arena `mallinfo`
-reads. The build decides its value and a reading does not, because a working
-heap with nothing on it also reads 0.
+every reading is 0, either because the C library is neither glibc nor newlib or
+because AddressSanitizer or ThreadSanitizer allocates outside the arena
+`mallinfo` reads. The build decides its value and a reading does not, because a
+working heap with nothing on it also reads 0.
 
 ## Two byte-order families
 
@@ -306,10 +306,15 @@ through what the C library already reports, for the reason given in the
 
 glibc 2.33 added `mallinfo2()`, whose fields are `size_t`, and deprecated
 `mallinfo()`, whose fields are `int`. newlib is the firmware libc and has only
-the older spelling. The header keeps both, selects between them by preprocessor
-feature detection, and uses the deprecated one only where `mallinfo2` is
-absent. A platform that provides neither still compiles. `in_use_bytes()`
-returns 0 and growth is always 0, and the header does not fail to compile.
+the older spelling. The header keeps both, selects between them by the glibc
+version, and uses the deprecated one only where `mallinfo2` is absent.
+
+A C library can ship `<malloc.h>` without either function, and the
+preprocessor can test for a header but not for a function. The header
+therefore takes a `mallinfo` arm only under `__GLIBC__` or `__NEWLIB__`, whose
+manuals document the functions in `<malloc.h>`. Every other C library compiles
+the arm in which `in_use_bytes()` returns 0 and growth is always 0, including
+one that does provide `mallinfo`.
 
 The detection flags are macros and not `constexpr` constants because they have
 to be testable by `#if`, which a constant cannot be. That is the whole reason

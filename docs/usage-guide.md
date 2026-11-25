@@ -240,9 +240,10 @@ It is a proxy, and its limit is part of the requirement:
   arena of glibc only, so an mmap-backed allocation above the threshold is
   invisible to this proxy. This does not affect firmware, because newlib has one
   arena.
-- On a platform with no `mallinfo`, every reading is 0. The header compiles and
-  the calls succeed (MR-2), so check `armed()` and `measuring()` before
-  concluding that a run was clean. Every reading is also 0 under a sanitiser,
+- On a C library other than glibc or newlib, every reading is 0, even where
+  that library has `mallinfo`. The header compiles and the calls succeed
+  (MR-2), so check `armed()` and `measuring()` before concluding that a run was
+  clean. Every reading is also 0 under a sanitiser,
   whose allocator `mallinfo` does not see.
 
 ## Include order

@@ -16,7 +16,10 @@
 #if defined(__GLIBC__)
 #include <features.h>
 #endif
-#if __has_include(<malloc.h>)
+// A libc can ship <malloc.h> without mallinfo, so the header alone proves
+// nothing. Only glibc and newlib, whose manuals document these functions in
+// <malloc.h>, take a mallinfo arm; <cstdlib> has defined their macros by here.
+#if __has_include(<malloc.h>) && (defined(__GLIBC__) || defined(__NEWLIB__))
 #include <malloc.h>
 // glibc 2.33 added mallinfo2 and deprecated mallinfo. newlib provides only
 // mallinfo.
